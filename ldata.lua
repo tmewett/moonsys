@@ -31,10 +31,10 @@ function M.is_type(x, t)
 end
 
 function M.struct(desc)
-    local function construct(args)
-        for name, type in pairs(desc) do
-            if not M.is_type(args[name], type) then
-                error("wrong type for field "..name)
+    local function construct(_, args)
+        for name, type_ in pairs(desc) do
+            if not M.is_type(args[name], type_) then
+                error(type(args[name]).." is wrong type for field "..name)
             end
         end
         return args
