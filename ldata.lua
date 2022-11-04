@@ -31,15 +31,15 @@ function M.is_type(x, t)
 end
 
 function M.struct(desc)
+    local index = {}
     local function construct(_, args)
         for name, type_ in pairs(desc) do
             if not M.is_type(args[name], type_) then
                 error(type(args[name]).." is wrong type for field "..name)
             end
         end
-        return args
+        return setmetatable(args, {__index=index})
     end
-    local index = {}
     return setmetatable({}, {__call=construct, __index=index, __newindex=index})
 end
 
