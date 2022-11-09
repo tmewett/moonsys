@@ -1,6 +1,7 @@
 require 'init'
 local glfw = require("moonglfw")
 local gl = require("moongl")
+local ml = require 'ml'
 
 local function reshape(_, w, h)
     gl.viewport(0, 0, w, h)
@@ -36,18 +37,19 @@ function buffer(data, opts)
 end
 
 C.vaos = {}
-function vao(attribs)
-    if not C.vaos[attribs] then
+function vao(attribs, opts)
+    local key = opts.key or attribs
+    if not C.vaos[key] then
         local vao = {}
         vao.id = gl.new_vertex_array()
-        for i, attrib in pairs(attribs) do
-            gl.bind_buffer('array', attrib.buffer)
-            gl.vertex_attrib_pointer(i-1, attrib.vlen, 'float', false, attrib.stride or 0, attrib.offset or 0)
-            gl.enable_vertex_attrib_array(i-1)
+        for i, at in pairs(attribs) do
+            gl.bind_buffer('array', at.buffer)
+            gl.vertex_attrib_pointer(i, at.vlen, 'float', false, at.stride or 0, at.offset or 0)
+            gl.enable_vertex_attrib_array(i)
         end
-        C.vaos[attribs] = vao
+        C.vaos[key] = vao
     end
-    return C.vaos[attribs]
+    return C.vaos[key]
 end
 
 C.progs = {}
@@ -62,8 +64,14 @@ function program(t)
 end
 
 function draw_arrays(prim, start, n, opts)
+    local by_loc = {}
+    for var, def in pairs(opts.attribs) do
+        local loc = gl.get_attrib_location(opts.program, var)
+        by_loc[loc] = def
+    end
+    local v = vao(by_loc, {key=opts.program})
     gl.use_program(opts.program)
-    gl.bind_vertex_array(opts.vao.id)
+    gl.bind_vertex_array(v.id)
     gl.draw_arrays(prim, start, n)
 end
 
@@ -84,11 +92,11 @@ local colors = gl.pack('float', {
 })
 
 local arrays = {
-    {
+    position = {
         buffer=buffer(positions),
         vlen=4,
     },
-    {
+    color_v = {
         buffer=buffer(colors),
         vlen=4,
     },
@@ -99,26 +107,26 @@ while drawing_window(win) do
     gl.clear("color", "depth")
 
     draw_arrays('triangles', 0, 3, {
-        vao = vao(arrays),
+        attribs = arrays,
         program = program({
             vertex = [[
                 #version 330 core
-                layout(location=0) in vec4 position;
-                layout(location=1) in vec4 color;
-                out vec4 Color;
+                in vec4 position;
+                in vec4 color_v;
+                out vec4 color;
 
                 void main() {
                    gl_Position = position;
-                   Color = color;
+                   color = color_v;
                 }
             ]],
             fragment = [[
                 #version 330 core
-                in vec4 Color;
-                out vec4 out_Color;
+                in vec4 color;
+                out vec4 out_color;
 
                 void main() {
-                   out_Color = Color;
+                   out_color = color;
                 }
             ]],
         }),
