@@ -3,6 +3,13 @@ local glfw = require("moonglfw")
 local gl = require("moongl")
 local ml = require 'ml'
 
+function memo(t, key, f)
+    if not t[key] then
+        t[key] = f()
+    end
+    return t[key]
+end
+
 local function reshape(_, w, h)
     gl.viewport(0, 0, w, h)
 end
@@ -28,9 +35,12 @@ end
 
 C.buffers = {}
 function buffer(data, opts)
+    opts = opts or {}
     if not C.buffers[data] then
-        local vbo = gl.new_buffer('array')
-        gl.buffer_data('array', data, 'static draw')
+        local vbo = {}
+        vbo.id = gl.new_buffer('array')
+        vbo.dtype = opts.dtype or 'float'
+        gl.buffer_data('array', gl.pack(vbo.dtype, data), 'static draw')
         C.buffers[data] = vbo
     end
     return C.buffers[data]
@@ -43,13 +53,30 @@ function vao(attribs, opts)
         local vao = {}
         vao.id = gl.new_vertex_array()
         for i, at in pairs(attribs) do
-            gl.bind_buffer('array', at.buffer)
-            gl.vertex_attrib_pointer(i, at.vlen, 'float', false, at.stride or 0, at.offset or 0)
+            local dtype_size = gl.sizeof(at.buffer.dtype)
+            gl.bind_buffer('array', at.buffer.id)
+            gl.vertex_attrib_pointer(i, at.vlen, 'float', false, (at.stride or 0) * dtype_size, (at.offset or 0) * dtype_size)
             gl.enable_vertex_attrib_array(i)
         end
         C.vaos[key] = vao
     end
     return C.vaos[key]
+end
+
+C.textures = {}
+-- Create a texture for binding to the GL_TEXTURE_2D target.
+function texture2D(data, opts)
+    local key = data
+    return memo(C.textures, key, function ()
+        local texture = gl.new_texture('2d')
+        gl.texture_parameter('2d', 'wrap s', 'repeat')
+        gl.texture_parameter('2d', 'wrap t', 'repeat')
+        gl.texture_parameter('2d', 'min filter', 'nearest')
+        gl.texture_parameter('2d', 'mag filter', 'nearest')
+        gl.pixel_store('unpack alignment', 1)
+        gl.texture_image('2d', opts.lod or 0, 'rgb', 'rgb', 'ubyte', gl.pack('ubyte', data), opts.w, opts.h)
+        return texture
+    end)
 end
 
 C.progs = {}
@@ -67,38 +94,49 @@ function draw_arrays(prim, start, n, opts)
     local by_loc = {}
     for var, def in pairs(opts.attribs) do
         local loc = gl.get_attrib_location(opts.program, var)
+        assert(loc >= 0, "invalid attribute")
         by_loc[loc] = def
     end
     local v = vao(by_loc, {key=opts.program})
+    for unit, targets in pairs(opts.textures or {}) do
+        gl.active_texture(unit)
+        for t, tex in pairs(targets) do
+            gl.bind_texture(t, tex)
+        end
+    end
     gl.use_program(opts.program)
+    for name, spec in pairs(opts.uniforms or {}) do
+        local loc = gl.get_uniform_location(opts.program, name)
+        gl.uniform(loc, spec[1], spec[2])
+    end
     gl.bind_vertex_array(v.id)
     gl.draw_arrays(prim, start, n)
 end
 
+local win = window(640, 480)
 
-local win = window(640, 480, "Hello")
+local data = {
+    -0.5, -0.5, 0.0, 1.0, 0.,0.,
+     0.5, -0.5, 0.0, 1.0, 7.,3.,
+     0.0,  0.5, 0.0, 1.0, 5.,7.,
+}
 
--- Positions and colors for the triangle's vertices:
-local positions = gl.pack('float', {
-    -0.5, -0.5, 0.0, 1.0, -- bottom left
-     0.5, -0.5, 0.0, 1.0, -- bottom right
-     0.0,  0.5, 0.0, 1.0, -- middle top
-})
-
-local colors = gl.pack('float', {
-    1.0, 0.0, 0.0, 1.0, -- red
-    0.0, 1.0, 0.0, 1.0, -- green
-    0.0, 0.0, 1.0, 1.0, -- blue
-})
+local checkerboard = {
+    255,255,255, 0,0,0,
+    0,0,0, 255,255,255,
+}
 
 local arrays = {
     position = {
-        buffer=buffer(positions),
+        buffer=buffer(data),
         vlen=4,
+        stride=6,
     },
-    color_v = {
-        buffer=buffer(colors),
-        vlen=4,
+    tc = {
+        buffer=buffer(data),
+        vlen=2,
+        stride=6,
+        offset=4,
     },
 }
 
@@ -112,23 +150,30 @@ while drawing_window(win) do
             vertex = [[
                 #version 330 core
                 in vec4 position;
-                in vec4 color_v;
-                out vec4 color;
+                in vec2 tc;
+                out vec2 tc_f;
 
                 void main() {
                    gl_Position = position;
-                   color = color_v;
+                   tc_f = tc;
                 }
             ]],
             fragment = [[
                 #version 330 core
-                in vec4 color;
-                out vec4 out_color;
+                uniform sampler2D tex;
+                in vec2 tc_f;
+                out vec4 color;
 
                 void main() {
-                   out_color = color;
+                   color = texture(tex, tc_f);
                 }
             ]],
         }),
+        textures={
+            {['2d']=texture2D(checkerboard, {w=2, h=2})}
+        },
+        uniforms={
+            tex={'int', 0}
+        },
     })
 end
