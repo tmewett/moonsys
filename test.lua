@@ -10,6 +10,14 @@ function memo(t, key, f)
     return t[key]
 end
 
+function make_key(...)
+    local t={}
+    for _, x in ipairs({...}) do
+        t[#t+1] = tostring(x)
+    end
+    return ml.tstring(t)
+end
+
 local function reshape(_, w, h)
     gl.viewport(0, 0, w, h)
 end
@@ -34,7 +42,7 @@ function drawing_window(w)
 end
 
 C.buffers = {}
-function buffer(data, opts)
+function use_buffer(data, opts)
     opts = opts or {}
     if not C.buffers[data] then
         local vbo = {}
@@ -47,7 +55,7 @@ function buffer(data, opts)
 end
 
 C.vaos = {}
-function vao(attribs, opts)
+function use_vao(attribs, opts)
     local key = opts.key or attribs
     if not C.vaos[key] then
         local vao = {}
@@ -65,10 +73,12 @@ end
 
 C.textures = {}
 -- Create a texture for binding to the GL_TEXTURE_2D target.
-function texture2D(data, opts)
+function use_texture_2D(data, opts)
     local key = data
     return memo(C.textures, key, function ()
-        local texture = gl.new_texture('2d')
+        local texture = {}
+        texture.id = gl.new_texture('2d')
+        texture.target = '2d'
         gl.texture_parameter('2d', 'wrap s', 'repeat')
         gl.texture_parameter('2d', 'wrap t', 'repeat')
         gl.texture_parameter('2d', 'min filter', 'nearest')
@@ -80,7 +90,7 @@ function texture2D(data, opts)
 end
 
 C.progs = {}
-function program(t)
+function use_program(t)
     local key = t.vertex .. t.fragment
     if not C.progs[key] then
         local prog, vsh, fsh = gl.make_program_s('vertex', t.vertex, 'fragment', t.fragment)
@@ -97,7 +107,7 @@ function draw_arrays(prim, start, n, opts)
         assert(loc >= 0, "invalid attribute")
         by_loc[loc] = def
     end
-    local v = vao(by_loc, {key=opts.program})
+    local v = use_vao(by_loc, {key=opts.program})
     for unit, targets in pairs(opts.textures or {}) do
         gl.active_texture(unit)
         for t, tex in pairs(targets) do
@@ -113,6 +123,66 @@ function draw_arrays(prim, start, n, opts)
     gl.draw_arrays(prim, start, n)
 end
 
+local texture_types = {
+    ['2d']='sampler2D',
+}
+
+C.shader_builds = {}
+C.texture_orders = {}
+function draw_arrays2(prim, start, n, opts)
+    local uniforms = opts.uniforms or {}
+    local textures = opts.textures or {}
+    local program = memo(C.shader_builds, make_key(opts.vertex_shader, opts.fragment_shader), function ()
+        local s = {}
+        for name, at in pairs(opts.attribs) do
+            s[#s+1] = ml.expand("in vec$n $name;\n", {n=at.vlen, name=name})
+        end
+        local vertex_header = table.concat(s)
+        s = {}
+        for name, spec in pairs(uniforms) do
+            s[#s+1] = ml.expand("uniform $type $name;\n", {type=spec[1], name=name})
+        end
+        local uniform_header = table.concat(s)
+        s = {}
+        for name, tex in pairs(textures) do
+            s[#s+1] = ml.expand("uniform $type $name;\n", {type=texture_types[tex.target], name=name})
+        end
+        local sampler_header = table.concat(s)
+        local vertex_source = "#version 330\n"..vertex_header..uniform_header..opts.vertex_shader
+        local fragment_source = "#version 330\n"..sampler_header..uniform_header..opts.fragment_shader
+        local prog, vsh, fsh = gl.make_program_s('vertex', vertex_source, 'fragment', fragment_source)
+        gl.delete_shaders(vsh, fsh)
+        return prog
+    end)
+    local by_loc = {}
+    for name, at in pairs(opts.attribs) do
+        local loc = gl.get_attrib_location(program, name)
+        assert(loc >= 0, "invalid attribute")
+        by_loc[loc] = at
+    end
+    local vao = use_vao(by_loc, {key=program})
+    gl.use_program(program)
+    for name, spec in pairs(uniforms) do
+        local loc = gl.get_uniform_location(program, name)
+        gl.uniform(loc, spec[1], spec[2])
+    end
+    local i=0
+    for name, tex in pairs(textures) do
+        gl.active_texture(i)
+        gl.bind_texture(tex.target, tex.id)
+        local loc = gl.get_uniform_location(program, name)
+        gl.uniform(loc, 'int', i)
+        i=i+1
+    end
+    gl.bind_vertex_array(vao.id)
+    gl.draw_arrays(prim, start, n)
+end
+
+local checkerboard = {
+    255,255,255, 0,0,0,
+    0,0,0, 255,255,255,
+}
+
 local win = window(640, 480)
 
 local data = {
@@ -121,19 +191,14 @@ local data = {
      0.0,  0.5, 0.0, 1.0, 5.,7.,
 }
 
-local checkerboard = {
-    255,255,255, 0,0,0,
-    0,0,0, 255,255,255,
-}
-
 local arrays = {
     position = {
-        buffer=buffer(data),
+        buffer=use_buffer(data),
         vlen=4,
         stride=6,
     },
     tc = {
-        buffer=buffer(data),
+        buffer=use_buffer(data),
         vlen=2,
         stride=6,
         offset=4,
@@ -144,36 +209,27 @@ while drawing_window(win) do
     gl.clear_color(0.0, 0.0, 0.0, 1.0)
     gl.clear("color", "depth")
 
-    draw_arrays('triangles', 0, 3, {
+    draw_arrays2('triangles', 0, 3, {
         attribs = arrays,
-        program = program({
-            vertex = [[
-                #version 330 core
-                in vec4 position;
-                in vec2 tc;
-                out vec2 tc_f;
-
-                void main() {
-                   gl_Position = position;
-                   tc_f = tc;
-                }
-            ]],
-            fragment = [[
-                #version 330 core
-                uniform sampler2D tex;
-                in vec2 tc_f;
-                out vec4 color;
-
-                void main() {
-                   color = texture(tex, tc_f);
-                }
-            ]],
-        }),
+        vertex_shader = [[
+            out vec2 tc_v;
+            void main() {
+                gl_Position = position;
+                tc_v = tc;
+            }
+        ]],
+        fragment_shader = [[
+            in vec2 tc_v;
+            out vec4 color;
+            void main() {
+                color = texture(tex, tc_v);
+            }
+        ]],
+        -- uniforms={
+        --     mouse={'float', glfw.get_cursor_pos(win)/480}
+        -- },
         textures={
-            {['2d']=texture2D(checkerboard, {w=2, h=2})}
-        },
-        uniforms={
-            tex={'int', 0}
+            tex=use_texture_2D(checkerboard, {w=2, h=2}),
         },
     })
 end
