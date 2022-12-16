@@ -43,6 +43,7 @@ def _to_buffer(data):
 class VAO():
     id: int
     spec: list
+    buffer: BufferObject
 
 def new_attributes(spec, data):
     buf = _to_buffer(data)
@@ -57,7 +58,7 @@ def new_attributes(spec, data):
         glVertexAttribPointer(i, vlen, GL_FLOAT, False, stride * ctypes.sizeof(GLfloat), offset * ctypes.sizeof(GLfloat))
         glEnableVertexAttribArray(i)
         offset += vlen
-    return VAO(id=vao, spec=spec)
+    return VAO(id=vao, spec=spec, buffer=buf)
 
 def set_state(*, attributes, vertex_shader, fragment_shader):
     vertex_src = "\n".join([
