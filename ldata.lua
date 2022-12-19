@@ -27,18 +27,23 @@ M.number = builtin_type('number')
 M.func = builtin_type('function')
 
 function M.is_type(x, t)
+    local mt = getmetatable(x)
+    if mt ~= nil and mt.ldata_type == t then
+        return true
+    end
     return t._test(x)
 end
 
 function M.struct(desc)
     local index = {}
-    local function construct(_, args)
+    local function construct(f, args)
         for name, type_ in pairs(desc) do
             if not M.is_type(args[name], type_) then
                 error(type(args[name]).." is wrong type for field "..name)
             end
         end
-        return setmetatable(args, {__index=index})
+        return setmetatable(args, {__index=index, ldata_type=f})
+        -- f is the thing we called, in this case the struct type table we return below
     end
     return setmetatable({}, {__call=construct, __index=index, __newindex=index})
 end

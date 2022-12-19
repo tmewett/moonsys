@@ -2,6 +2,8 @@ require 'init'
 local glfw = require("moonglfw")
 local gl = require("moongl")
 local ml = require 'ml'
+local nd = require 'ndarray'
+local mesh = require 'mesh'
 
 function memo(t, key, f)
     if not t[key] then
@@ -16,6 +18,16 @@ function make_key(...)
         t[#t+1] = tostring(x)
     end
     return ml.tstring(t)
+end
+
+function mat4mul(a, b)
+    local ab={}
+    for i=1,16 do
+        ab[i]=0
+        for c=1,4 do
+            ab[i]=ab[i]+a[(i-1)%4+c*4]*b[(i-1)//4+c]
+        end
+    end
 end
 
 local function reshape(_, w, h)
@@ -50,6 +62,19 @@ function use_buffer(data, opts)
         vbo.dtype = opts.dtype or 'float'
         gl.buffer_data('array', gl.pack(vbo.dtype, data), 'static draw')
         C.buffers[data] = vbo
+    end
+    return C.buffers[data]
+end
+
+function use_element_buffer(data, opts)
+    opts = opts or {}
+    if not C.buffers[data] then
+        local buf = {}
+        buf.id = gl.new_buffer('element array')
+        buf.len = #data
+        buf.dtype = 'ushort'
+        gl.buffer_data('element array', gl.pack(buf.dtype, data), 'static draw')
+        C.buffers[data] = buf
     end
     return C.buffers[data]
 end
@@ -128,8 +153,7 @@ local texture_types = {
 }
 
 C.shader_builds = {}
-C.texture_orders = {}
-function draw_arrays2(prim, start, n, opts)
+function set_state(opts)
     local uniforms = opts.uniforms or {}
     local textures = opts.textures or {}
     local program = memo(C.shader_builds, make_key(opts.vertex_shader, opts.fragment_shader), function ()
@@ -164,8 +188,13 @@ function draw_arrays2(prim, start, n, opts)
     gl.use_program(program)
     for name, spec in pairs(uniforms) do
         local loc = gl.get_uniform_location(program, name)
-        gl.uniform(loc, spec[1], spec[2])
+        if spec[1] == 'mat4' then
+            gl.uniform_matrix(loc, 'float', '4x4', false, table.unpack(np.unravel(spec[2])))
+        else
+            gl.uniform(loc, spec[1], spec[2])
+        end
     end
+    -- aliasing?
     local i=0
     for name, tex in pairs(textures) do
         gl.active_texture(i)
@@ -175,7 +204,12 @@ function draw_arrays2(prim, start, n, opts)
         i=i+1
     end
     gl.bind_vertex_array(vao.id)
-    gl.draw_arrays(prim, start, n)
+end
+
+function draw_elements(prim, elems, opts)
+    set_state(opts)
+    gl.bind_buffer('element array', elems.id)
+    gl.draw_elements(prim, elems.len, elems.dtype, 0)
 end
 
 local checkerboard = {
@@ -185,23 +219,13 @@ local checkerboard = {
 
 local win = window(640, 480)
 
-local data = {
-    -0.5, -0.5, 0.0, 1.0, 0.,0.,
-     0.5, -0.5, 0.0, 1.0, 7.,3.,
-     0.0,  0.5, 0.0, 1.0, 5.,7.,
-}
+local cube = mesh.cube()
+local cube_elems = use_element_buffer(mesh.triangulate(cube))
 
 local arrays = {
     position = {
-        buffer=use_buffer(data),
-        vlen=4,
-        stride=6,
-    },
-    tc = {
-        buffer=use_buffer(data),
-        vlen=2,
-        stride=6,
-        offset=4,
+        buffer=use_buffer(cube.vertices.data),
+        vlen=3,
     },
 }
 
@@ -209,27 +233,26 @@ while drawing_window(win) do
     gl.clear_color(0.0, 0.0, 0.0, 1.0)
     gl.clear("color", "depth")
 
-    draw_arrays2('triangles', 0, 3, {
+    local view_T = nd.look_at_T({
+        at={0,0,0},
+        from={2,2,0},
+    })
+
+    draw_elements('triangles', cube_elems, {
         attribs = arrays,
         vertex_shader = [[
-            out vec2 tc_v;
             void main() {
-                gl_Position = position;
-                tc_v = tc;
+                gl_Position = view_T * vec4(position, 1.0);
             }
         ]],
         fragment_shader = [[
-            in vec2 tc_v;
             out vec4 color;
             void main() {
-                color = texture(tex, tc_v);
+                color = vec4(1.0, 0.,0.,1.);
             }
         ]],
-        -- uniforms={
-        --     mouse={'float', glfw.get_cursor_pos(win)/480}
-        -- },
-        textures={
-            tex=use_texture_2D(checkerboard, {w=2, h=2}),
-        },
+        uniforms={
+            view_T={'mat4', view_T}
+        }
     })
 end
