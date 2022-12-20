@@ -17,11 +17,11 @@ def array_sizeof(a):
 def array_ptr(a):
     return a.buffer_info()[0]
 
-_start_time = time()
 def get_elapsed_time():
     return time() - _start_time
 
-def use_memo(key, f):
+def use_memo(f, *, key=None):
+    if key is None: key = id(f)
     if key in _keys:
         return _keys[key]
     print("new key")
@@ -29,21 +29,25 @@ def use_memo(key, f):
     _keys[key] = x
     return x
 
+def use_once(f, *, key=None):
+    return use_memo(f, key=key)
+
 def use_program(**stages):
     def new():
         shaders = [
-            use_memo(src, lambda: Shader(src, stage))
+            use_once(lambda: Shader(src, stage), key=src)
             for stage, src in stages.items()
         ]
         print(stages)
         return ShaderProgram(*shaders)
-    return use_memo(frozenset(stages.values()), new)
+    return use_once(new, key=frozenset(stages.values()))
 
-def _to_buffer(data):
-    buf = BufferObject(array_sizeof(data))
-    # buf.set_data(data.tobytes())
-    glBufferData(GL_ARRAY_BUFFER, array_sizeof(data), array_ptr(data), GL_DYNAMIC_DRAW)
-    return buf
+def use_array_buffer(data, *, key=None):
+    if key is None: key = id(data)
+    arr = array('f', data)
+    buffer = use_once(lambda: BufferObject(array_sizeof(arr)), key=key)
+    buffer.set_data(arr.tobytes())
+    return buffer
 
 @dataclass
 class VAO():
@@ -51,8 +55,7 @@ class VAO():
     spec: list
     buffer: BufferObject
 
-def new_attributes(spec, data):
-    buf = _to_buffer(data)
+def new_attributes(spec, buf):
     buf.bind(GL_ARRAY_BUFFER)
     vao = GLuint()
     glGenVertexArrays(1, vao)
@@ -88,67 +91,12 @@ def set_state(*, attributes, vertex_shader, fragment_shader, uniforms={}):
         program[name] = value
     program.use()
 
-window = pyglet.window.Window()
+def clear_window():
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-cube_vs = [
-    0.0, 0.0, 0.0,
-    0.0, 0.0, 1.0,
-    0.0, 1.0, 0.0,
-    0.0, 1.0, 1.0,
-    1.0, 0.0, 0.0,
-    1.0, 0.0, 1.0,
-    1.0, 1.0, 0.0,
-    1.0, 1.0, 1.0,
-
-    0.0, 0.0, 0.0,
-    0.0, 0.0, 1.0,
-    0.0, 1.0, 0.0,
-    0.0, 1.0, 1.0,
-    1.0, 0.0, 0.0,
-    1.0, 0.0, 1.0,
-    1.0, 1.0, 0.0,
-    1.0, 1.0, 1.0,
-
-    0.0, 0.0, 0.0,
-    0.0, 0.0, 1.0,
-    0.0, 1.0, 0.0,
-    0.0, 1.0, 1.0,
-    1.0, 0.0, 0.0,
-    1.0, 0.0, 1.0,
-    1.0, 1.0, 0.0,
-    1.0, 1.0, 1.0,
-]
-
-attributes = new_attributes(
-    [('pos', 3)],
-    array('f', [
-        -0.5, -0.5, -0.5,
-        0.5, -0.5, -0.5,
-        0.0,  0.5, -0.5,
-    ]),
-)
-
-@window.event
-def on_draw():
-    proj = pm.Mat4.look_at(pm.Vec3(0., 0., 0.), pm.Vec3(get_elapsed_time(), 0., -1.), pm.Vec3(0., 1., 0.))
-    window.clear()
-    set_state(
-        attributes=attributes,
-        vertex_shader="""
-            void main() {
-                gl_Position = proj * vec4(pos, 1.0);
-            }
-        """,
-        fragment_shader="""
-            out vec4 outColor;
-            void main() {
-                outColor = vec4(1.0, 1.0, 1.0, 1.0);
-            }
-        """,
-        uniforms={
-            'proj': proj,
-        }
-    )
-    glDrawArrays(GL_TRIANGLES, 0, 3)
-
-pyglet.app.run()
+def run_window(f):
+    global _start_time
+    _start_time = time()
+    window = pyglet.window.Window()
+    window.on_draw = f
+    pyglet.app.run()
