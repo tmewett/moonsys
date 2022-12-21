@@ -115,5 +115,6 @@ def run_window(f):
     global _start_time
     _start_time = time()
     window = pyglet.window.Window()
+    glEnable(GL_DEPTH_TEST)
     window.on_draw = f
     pyglet.app.run()
