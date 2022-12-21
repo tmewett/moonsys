@@ -49,6 +49,13 @@ def use_array_buffer(data, *, key=None):
     buffer.set_data(arr.tobytes())
     return buffer
 
+def use_element_buffer(data, *, key=None):
+    if key is None: key = id(data)
+    arr = array('H', data)
+    buffer = use_once(lambda: BufferObject(array_sizeof(arr)), key=key)
+    buffer.set_data(arr.tobytes())
+    return buffer
+
 @dataclass
 class VAO():
     id: int
@@ -93,6 +100,16 @@ def set_state(*, attributes, vertex_shader, fragment_shader, uniforms={}):
 
 def clear_window():
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+_modes = {
+    'triangles': GL_TRIANGLES,
+}
+
+def draw_elements(ebuf, mode, count=None, offset=0):
+    if count is None:
+        count = ebuf.size // ctypes.sizeof(GLushort)
+    ebuf.bind(GL_ELEMENT_ARRAY_BUFFER)
+    glDrawElements(_modes[mode], count, GL_UNSIGNED_SHORT, offset)
 
 def run_window(f):
     global _start_time

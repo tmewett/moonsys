@@ -4,15 +4,15 @@ import pyglet.math as pm
 import trimesh
 from pyglet.gl import glDrawArrays, GL_TRIANGLES
 
-box = trimesh.creation.box((1.,1.,1.))
-tris = box.triangles.ravel()
-print(tris, len(tris))
+mesh = trimesh.creation.icosphere(1)
+
 
 def draw():
-    proj = pm.Mat4.look_at(pm.Vec3(0., 0., 0.), pm.Vec3(pl.get_elapsed_time(), 0., -1.), pm.Vec3(0., 1., 0.))
+    look = pm.Mat4.look_at(pm.Vec3(pl.get_elapsed_time(), 0., 1.0), pm.Vec3(0., 0., 0.), pm.Vec3(0., 1., 0.))
+    persp = pm.Mat4.perspective_projection(1., 0.1, 100.)
     attributes = pl.use_once(lambda: pl.new_attributes(
         [('pos', 3)],
-        pl.use_array_buffer(tris),
+        pl.use_array_buffer(mesh.vertices.ravel()),
     ))
     pl.clear_window()
     pl.set_state(
@@ -29,9 +29,9 @@ def draw():
             }
         """,
         uniforms={
-            'proj': proj,
+            'proj': look @ persp,
         }
     )
-    glDrawArrays(GL_TRIANGLES, 0, len(tris)//3)
+    pl.draw_elements(pl.use_element_buffer(mesh.faces.ravel()), 'triangles')
 
 pl.run_window(draw)
