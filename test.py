@@ -9,9 +9,9 @@ mesh = trimesh.creation.icosahedron()
 
 data = np.block([mesh.vertices, mesh.vertex_normals])
 
-def describe(*, draws, **_):
+def describe():
     persp = pm.Mat4.perspective_projection(1.5, 0.1, 100.)
-    @draws.subscribe
+    @pl.obtain('draws').subscribe
     def draw(opts):
         t = opts['time']
         look = pm.Mat4.look_at(pm.Vec3(3.*math.sin(t), 0., 3.*math.cos(t)), pm.Vec3(0., 0., 0.), pm.Vec3(0., 1., 0.))

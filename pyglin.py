@@ -10,13 +10,14 @@ from pyglet.graphics.vertexbuffer import BufferObject
 from pyglet.graphics.shader import Shader, ShaderProgram
 from pyglet.gl import *
 
-_keys = dict()
-
 def array_sizeof(a):
     return a.buffer_info()[1] * a.itemsize
 
 def array_ptr(a):
     return a.buffer_info()[0]
+
+_keys = dict()
+_provided = dict()
 
 def use_memo(f, *, key=None):
     if key is None: key = id(f)
@@ -29,6 +30,9 @@ def use_memo(f, *, key=None):
 
 def use_once(f, *, key=None):
     return use_memo(f, key=key)
+
+def obtain(name):
+    return _provided.get(name)
 
 def use_program(**stages):
     def new():
@@ -111,8 +115,9 @@ def draw_elements(ebuf, mode, count=None, offset=0):
 
 def run_window(f):
     draws = reactivex.Subject()
-    f(draws=draws)
+    _provided['draws'] = draws
     window = pyglet.window.Window()
+    f()
     @window.event
     def on_draw():
         draws.on_next({'time': time()})
