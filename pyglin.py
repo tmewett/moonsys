@@ -5,6 +5,7 @@ from time import time
 
 import pyglet
 import pyglet.math as pm
+import reactivex
 from pyglet.graphics.vertexbuffer import BufferObject
 from pyglet.graphics.shader import Shader, ShaderProgram
 from pyglet.gl import *
@@ -16,9 +17,6 @@ def array_sizeof(a):
 
 def array_ptr(a):
     return a.buffer_info()[0]
-
-def get_elapsed_time():
-    return time() - _start_time
 
 def use_memo(f, *, key=None):
     if key is None: key = id(f)
@@ -112,9 +110,16 @@ def draw_elements(ebuf, mode, count=None, offset=0):
     glDrawElements(_modes[mode], count, GL_UNSIGNED_SHORT, offset)
 
 def run_window(f):
-    global _start_time
-    _start_time = time()
+    draws = reactivex.Subject()
+    f(draws=draws)
     window = pyglet.window.Window()
+    @window.event
+    def on_draw():
+        draws.on_next({'time': time()})
     glEnable(GL_DEPTH_TEST)
-    window.on_draw = f
+    # def on_update(dt):
+    #     ctx.updates.on_next(time() - ctx._start_time)
+    # ctx._start_time = time()
+    # ctx.updates.on_next(0.0)
+    # pyglet.clock.schedule_interval(on_update, 0.1)
     pyglet.app.run()
