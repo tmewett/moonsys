@@ -82,18 +82,25 @@ _uniform_types = {
     pm.Mat4: "mat4",
 }
 
-def set_state(*, attributes, vertex_shader, fragment_shader, uniforms={}):
+def set_state(*, attributes, vertex_shader, fragment_shader, passthrough=[], uniforms={}):
+    attr_lengths = dict(attributes.spec)
     uniform_header = [f"uniform {_uniform_types[type(value)]} {name};" for name, value in uniforms.items()]
     vertex_src = "\n".join([
         "#version 330 core",
         *uniform_header,
         *[f"layout(location={loc}) in vec{n} {name};" for loc, (name, n) in enumerate(attributes.spec)],
+        *[f"out vec{attr_lengths[name]} attr_{name};" for name in passthrough],
         vertex_shader,
+        "void main() { doStage();",
+        *[f"attr_{name} = {name};" for name in passthrough],
+        "}",
     ])
     fragment_src = "\n".join([
         "#version 330 core",
         *uniform_header,
+        *[f"in vec{attr_lengths[name]} attr_{name};" for name in passthrough],
         fragment_shader,
+        "void main() { doStage(); }",
     ])
     program = use_program(vertex=vertex_src, fragment=fragment_src)
     for name, value in uniforms.items():

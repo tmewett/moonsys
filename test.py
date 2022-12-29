@@ -23,19 +23,17 @@ def describe():
         pl.set_state(
             attributes=attributes,
             vertex_shader="""
-                out vec3 normV;
-                void main() {
+                void doStage() {
                     gl_Position = proj * vec4(pos, 1.0);
-                    normV=norm;
                 }
             """,
             fragment_shader="""
-                in vec3 normV;
                 out vec4 outColor;
-                void main() {
-                    outColor = vec4((normV.x + 1.0)/2, 0.1, 0.5, 1.0);
+                void doStage() {
+                    outColor = vec4((attr_norm.x + 1.0)/2, 0.1, 0.5, 1.0);
                 }
             """,
+            passthrough={'norm'},
             uniforms={
                 'proj': look @ persp,
             }
