@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 
 import pyglet
+from pyglet.math import Vec2
 
 import refs_gl
 from refs import Ref, Computed
@@ -12,17 +13,16 @@ def csin(x):
 @refs_gl.run_window
 def setup(ctx):
     time = ctx[refs_gl.FrameTimeContext]
-    offset, zoom = refs_gl.use_draggable_view(ctx, (0, 0))
+    view = refs_gl.DraggableView(ctx, Vec2(0, 0))
     img = refs_gl.ShaderImage(
         Path("shaders/mandelbrot.glsl").read_text(),
         uniforms={
             'resolution': ctx[refs_gl.RegionContext].size,
-            'offset': offset,
-            'zoom': zoom,
+            'offset': view.coords,
+            'zoom': view.zoom,
             'time': time,
         },
     )
-    print(offset._watchers, zoom._watchers)
     @time.watch
     def draw():
         img.draw(ctx)

@@ -21,11 +21,16 @@ class _ReadableRef:
         return v
     def watch(self, f):
         self._watchers.append(f)
+        return f
+    def quiet_get(self):
+        return self._value
 
 class _WriteableRef:
     def set(self, x):
         self._value = x
         for w in self._watchers: w()
+    def map(self, f):
+        self.set(f(self()))
 
 def as_ref(x):
     if isinstance(x, _ReadableRef):
@@ -36,8 +41,6 @@ class Ref(_ReadableRef, _WriteableRef):
     def __init__(self, value):
         self._value = value
         self._watchers = []
-    def map(self, f):
-        self.set(f(self()))
 
 class DataRef(Ref):
     def set(self, x):
@@ -45,10 +48,18 @@ class DataRef(Ref):
             return
         super().set(x)
 
+def computed(*args):
+    def builder(f):
+        return Computed(f, *args)
+    return builder
+
 class Computed(_ReadableRef):
-    def __init__(self, function):
-        deps = set()
-        with _track_into(deps):
+    def __init__(self, function, deps=None):
+        if deps is None:
+            deps = set()
+            with _track_into(deps):
+                self._value = function()
+        else:
             self._value = function()
         for ref in deps:
             ref.watch(self._expire)
@@ -65,3 +76,10 @@ class Computed(_ReadableRef):
                 self._value = self._function()
             self._expired = False
         return super().__call__(*args)
+
+class WriteableComputed(Computed, _WriteableRef):
+    def setter(self, f):
+        self._set_transform = f
+        return f
+    def set(self, value):
+        return super().set(self._set_transform(value))

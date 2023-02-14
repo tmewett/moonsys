@@ -14,7 +14,7 @@ int iterations(vec2 p) {
 }
 void main() {
     vec2 p = (-resolution.xy + 2.0*(gl_FragCoord.xy))/resolution.y;
-	p = p/zoom - 2.0 * offset / resolution.y;
+	p = p/zoom + 2.0 * offset / resolution.y;
 	vec2 z = vec2(0,0);
 	int i = 0;
 	for (; i < maxIterations; i++){

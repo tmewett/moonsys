@@ -2,8 +2,9 @@ from dataclasses import dataclass, field
 from time import time
 
 import pyglet
+from pyglet.math import Vec2
 
-from refs import as_ref, Computed, DataRef, Ref
+from refs import as_ref, computed, DataRef, Ref, WriteableComputed
 
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -11,24 +12,51 @@ def clear(*, color, depth):
     glClearDepth(depth)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-def tween(ctx, ref):
-
+def tween(ctx, target, duration=0.2, curve=lambda t: t):
+    start = target()
+    start_time = 0.0
+    @WriteableComputed
+    def tweened():
+        t = ctx[FrameTimeContext]() - start_time
+        # Only depend on frame time to avoid race condition between watchers.
+        return start + (target.quiet_get() - start)*curve(min(t / duration, 1.0))
+    @target.watch
+    def change():
+        nonlocal start, start_time
+        start = tweened()
+        start_time = ctx[FrameTimeContext]()
+    change()
+    @tweened.setter
+    def force(value):
+        nonlocal start
+        start = value
+        target.set(value)
+        return value
+    return tweened
 
 class DraggableView:
     def __init__(self, ctx, origin, *, scroll_factor=4/3):
         coords_target = Ref(origin)
         zoom_target = Ref(1.0)
+        coords = tween(ctx, coords_target)
+        zoom = tween(ctx, zoom_target)
+        # coords = tween(ctx, coords_target)
+        # zoom = tween(ctx, zoom_target)
         @ctx['mouse_diff'].watch
         def _():
             if not ctx[LeftMouseContext](): return
+            md = ctx['mouse_diff']()
+            coords.map(lambda x: x - md/zoom())
             # Stop tweening when dragged.
-            coords_target.set(coords())
-            zoom_target.set(zoom())
-            mx, my = ctx['mouse_diff']()
-            coords_target.map(lambda x: (x[0] + mx / zoom(), x[1] + my / zoom()))
+            # zoom_target.set(zoom())
         @ctx['scroll_diff'].watch
         def _():
-            zoom_target.map(lambda x: x * scroll_factor**ctx['scroll_diff']()[1])
+            amount = ctx['scroll_diff']().y
+            from_center = ctx[MousePositionContext]() - ctx[RegionContext].size / 2
+            new_coords = coords() + from_center*(1.0 - 1/scroll_factor)*amount/zoom()
+            new_zoom = zoom() * scroll_factor**amount
+            coords_target.set(new_coords)
+            zoom_target.set(new_zoom)
         self.coords = coords
         self.zoom = zoom
 
@@ -92,12 +120,12 @@ def run_window(f):
     start_time = time()
 
     v_GLContext = GLContextData()
-    v_RegionContext = Region((window.width, window.height))
+    v_RegionContext = Region(Vec2(window.width, window.height))
     v_FrameTimeContext = Ref(0.0)
     mouse_pos = Ref(None)
     lmb = Ref(False)
-    mouse_diff = Ref((0, 0))
-    scroll_diff = Ref((0, 0))
+    mouse_diff = Ref(Vec2(0, 0))
+    scroll_diff = Ref(Vec2(0, 0))
     ctx = Context({
         GLContext: v_GLContext,
         RegionContext: v_RegionContext,
@@ -113,12 +141,12 @@ def run_window(f):
         v_FrameTimeContext.set(time() - start_time)
     @window.event
     def on_mouse_motion(x, y, dx, dy):
-        mouse_pos.set((x, y))
-        mouse_diff.set((dx, dy))
+        mouse_pos.set(Vec2(x, y))
+        mouse_diff.set(Vec2(dx, dy))
     @window.event
     def on_mouse_drag(x, y, dx, dy, *_):
-        mouse_pos.set((x, y))
-        mouse_diff.set((dx, dy))
+        mouse_pos.set(Vec2(x, y))
+        mouse_diff.set(Vec2(dx, dy))
     @window.event
     def on_mouse_press(x, y, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
@@ -129,5 +157,5 @@ def run_window(f):
             lmb.set(False)
     @window.event
     def on_mouse_scroll(x, y, sx, sy):
-        scroll_diff.set((sx, sy))
+        scroll_diff.set(Vec2(sx, sy))
     pyglet.app.run()
