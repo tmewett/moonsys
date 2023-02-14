@@ -35,13 +35,13 @@ def tween(ctx, target, duration=0.2, curve=lambda t: t):
     return tweened
 
 class DraggableView:
-    def __init__(self, ctx, origin, *, scroll_factor=4/3):
+    def __init__(self, ctx, origin, *, scroll_factor=5/3):
         coords_target = Ref(origin)
         zoom_target = Ref(1.0)
+        # coords = coords_target
+        # zoom = zoom_target
         coords = tween(ctx, coords_target)
         zoom = tween(ctx, zoom_target)
-        # coords = tween(ctx, coords_target)
-        # zoom = tween(ctx, zoom_target)
         @ctx['mouse_diff'].watch
         def _():
             if not ctx[LeftMouseContext](): return
@@ -52,8 +52,9 @@ class DraggableView:
         @ctx['scroll_diff'].watch
         def _():
             amount = ctx['scroll_diff']().y
-            from_center = ctx[MousePositionContext]() - ctx[RegionContext].size / 2
-            new_coords = coords() + from_center*(1.0 - 1/scroll_factor)*amount/zoom()
+            from_center = (ctx[MousePositionContext]() - ctx[RegionContext].size / 2) / zoom()
+            factor = 1.0 - 1/scroll_factor if amount > 0 else scroll_factor - 1.0
+            new_coords = coords() + from_center*factor*amount
             new_zoom = zoom() * scroll_factor**amount
             coords_target.set(new_coords)
             zoom_target.set(new_zoom)
