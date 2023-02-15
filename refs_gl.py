@@ -4,7 +4,7 @@ from time import time
 import pyglet
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, DataRef, Ref, WriteableComputed
+from refs import as_ref, Computed, DataRef, Ref, WriteableComputed
 
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -20,18 +20,18 @@ def tween(ctx, target, duration=0.2, curve=lambda t: t):
         t = ctx[FrameTimeContext]() - start_time
         # Only depend on frame time to avoid race condition between watchers.
         return start + (target.quiet_get() - start)*curve(min(t / duration, 1.0))
-    @target.watch
-    def change():
-        nonlocal start, start_time
-        start = tweened()
-        start_time = ctx[FrameTimeContext]()
-    change()
     @tweened.setter
     def force(value):
         nonlocal start
         start = value
         target.set(value)
         return value
+    @target.watch
+    def change():
+        nonlocal start, start_time
+        start = tweened()
+        start_time = ctx[FrameTimeContext]()
+    change()
     return tweened
 
 class DraggableView:
