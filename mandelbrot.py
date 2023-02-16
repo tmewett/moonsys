@@ -18,7 +18,7 @@ def setup(ctx):
         Path("shaders/mandelbrot.glsl").read_text(),
         uniforms={
             'resolution': ctx[refs_gl.RegionContext].size,
-            'offset': view.coords,
+            'offset': view.center,
             'zoom': view.zoom,
             'time': time,
         },

@@ -12,7 +12,7 @@ def clear(*, color, depth):
     glClearDepth(depth)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-def tween(ctx, target, duration=0.2, curve=lambda t: t):
+def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
     start = target()
     start_time = 0.0
     @WriteableComputed
@@ -36,30 +36,26 @@ def tween(ctx, target, duration=0.2, curve=lambda t: t):
 
 class DraggableView:
     def __init__(self, ctx, origin, *, scroll_factor=5/3):
-        coords_target = Ref(origin)
-        zoom_target = Ref(1.0)
-        # coords = coords_target
-        # zoom = zoom_target
-        coords = tween(ctx, coords_target)
-        zoom = tween(ctx, zoom_target)
+        self.center = as_ref(origin)
+        s_target = Ref(0.0)
+        s = tween(ctx, s_target)
+        self.anchor = self.center()
+        self.s_0 = Vec2(0.0, 0.0)
+        self.zoom = Computed(lambda: scroll_factor ** s())
+        self.center = Computed(lambda: self.anchor + self.s_0 * 1 / self.zoom())
         @ctx['mouse_diff'].watch
         def _():
             if not ctx[LeftMouseContext](): return
-            md = ctx['mouse_diff']()
-            coords.map(lambda x: x - md/zoom())
-            # Stop tweening when dragged.
-            # zoom_target.set(zoom())
+            self.anchor = self.center() - ctx['mouse_diff']() / self.zoom()
+            self.s_0 = Vec2(0.0, 0.0)
+            s.map(lambda x: x)
         @ctx['scroll_diff'].watch
         def _():
             amount = ctx['scroll_diff']().y
-            from_center = (ctx[MousePositionContext]() - ctx[RegionContext].size / 2) / zoom()
-            factor = 1.0 - 1/scroll_factor if amount > 0 else scroll_factor - 1.0
-            new_coords = coords() + from_center*factor*amount
-            new_zoom = zoom() * scroll_factor**amount
-            coords_target.set(new_coords)
-            zoom_target.set(new_zoom)
-        self.coords = coords
-        self.zoom = zoom
+            m = (ctx[MousePositionContext]() - ctx[RegionContext].size / 2)
+            self.anchor = self.center() + m / self.zoom()
+            self.s_0 = -m
+            s_target.map(lambda x: x + amount)
 
 class ShaderImage:
     def __init__(self, fragment_src, *, uniforms):
