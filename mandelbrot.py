@@ -12,12 +12,12 @@ def csin(x):
 
 @refs_gl.run_window
 def setup(ctx):
-    time = ctx[refs_gl.FrameTimeContext]
+    time = ctx[refs_gl.FrameTimeProvider]
     view = refs_gl.DraggableView(ctx, Vec2(0, 0))
     img = refs_gl.ShaderImage(
         Path("shaders/mandelbrot.glsl").read_text(),
         uniforms={
-            'resolution': ctx[refs_gl.RegionContext].size,
+            'resolution': ctx[refs_gl.RegionProvider].size,
             'offset': view.center,
             'zoom': view.zoom,
             'time': time,

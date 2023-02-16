@@ -17,7 +17,7 @@ def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
     start_time = 0.0
     @WriteableComputed
     def tweened():
-        t = ctx[FrameTimeContext]() - start_time
+        t = ctx[FrameTimeProvider]() - start_time
         # Only depend on frame time to avoid race condition between watchers.
         return start + (target.quiet_get() - start)*curve(min(t / duration, 1.0))
     @tweened.setter
@@ -30,7 +30,7 @@ def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
     def change():
         nonlocal start, start_time
         start = tweened()
-        start_time = ctx[FrameTimeContext]()
+        start_time = ctx[FrameTimeProvider]()
     change()
     return tweened
 
@@ -45,14 +45,14 @@ class DraggableView:
         self.center = Computed(lambda: self.anchor + self.s_0 * 1 / self.zoom())
         @ctx['mouse_diff'].watch
         def _():
-            if not ctx[LeftMouseContext](): return
+            if not ctx[LeftMouseProvider](): return
             self.anchor = self.center() - ctx['mouse_diff']() / self.zoom()
             self.s_0 = Vec2(0.0, 0.0)
             s.map(lambda x: x)
         @ctx['scroll_diff'].watch
         def _():
             amount = ctx['scroll_diff']().y
-            m = (ctx[MousePositionContext]() - ctx[RegionContext].size / 2)
+            m = (ctx[MousePositionProvider]() - ctx[RegionProvider].size / 2)
             self.anchor = self.center() + m / self.zoom()
             self.s_0 = -m
             s_target.map(lambda x: x + amount)
@@ -67,7 +67,7 @@ class ShaderImage:
             (0, 1, 2, 0, 2, 3),
             pos=('f', (-1.0,1.0, -1.0,-1.0, 1.0,-1.0, 1.0,1.0)))
     def draw(self, ctx):
-        ctx[GLContext].shader.set(self.shader)
+        ctx[GLStateProvider].shader.set(self.shader)
         self._vlist.draw(pyglet.gl.GL_TRIANGLES)
 
 class Shader:
@@ -87,20 +87,20 @@ class Shader:
                 # print(f"set uniform {name!r} to {ref()}")
             self._program[name] = ref()
 
-class GLContextData:
+class GLState:
     def __init__(self):
         self.shader = DataRef(None)
         @self.shader.watch
         def use():
             self.shader()._program.use()
-class GLContext: pass
+class GLStateProvider: pass
 class Region:
     def __init__(self, size):
         self.size = size
-class RegionContext: pass
-class FrameTimeContext: pass
-class MousePositionContext: pass
-class LeftMouseContext: pass
+class RegionProvider: pass
+class FrameTimeProvider: pass
+class MousePositionProvider: pass
+class LeftMouseProvider: pass
 
 class Context:
     def __init__(self, data):
@@ -108,7 +108,7 @@ class Context:
     def provide(self, data):
         child = self._data.copy()
         child.update(data)
-        return Context(child)
+        return Provider(child)
     def __getitem__(self, key):
         return self._data[key]
 
@@ -116,26 +116,26 @@ def run_window(f):
     window = pyglet.window.Window()
     start_time = time()
 
-    v_GLContext = GLContextData()
-    v_RegionContext = Region(Vec2(window.width, window.height))
-    v_FrameTimeContext = Ref(0.0)
+    v_GLStateProvider = GLState()
+    v_RegionProvider = Region(Vec2(window.width, window.height))
+    v_FrameTimeProvider = Ref(0.0)
     mouse_pos = Ref(None)
     lmb = Ref(False)
     mouse_diff = Ref(Vec2(0, 0))
     scroll_diff = Ref(Vec2(0, 0))
     ctx = Context({
-        GLContext: v_GLContext,
-        RegionContext: v_RegionContext,
-        FrameTimeContext: v_FrameTimeContext,
-        MousePositionContext: mouse_pos,
-        LeftMouseContext: lmb,
+        GLStateProvider: v_GLStateProvider,
+        RegionProvider: v_RegionProvider,
+        FrameTimeProvider: v_FrameTimeProvider,
+        MousePositionProvider: mouse_pos,
+        LeftMouseProvider: lmb,
         'mouse_diff': mouse_diff,
         'scroll_diff': scroll_diff,
     })
     f(ctx)
     @window.event
     def on_draw():
-        v_FrameTimeContext.set(time() - start_time)
+        v_FrameTimeProvider.set(time() - start_time)
     @window.event
     def on_mouse_motion(x, y, dx, dy):
         mouse_pos.set(Vec2(x, y))
