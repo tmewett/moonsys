@@ -27,8 +27,10 @@ class _ReadableRef:
 
 class _WriteableRef:
     def set(self, x):
-        self._value = x
+        self.quiet_set(x)
         for w in self._watchers: w()
+    def quiet_set(self, x):
+        self._value = x
     def map(self, f):
         self.set(f(self()))
 

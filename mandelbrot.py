@@ -12,8 +12,10 @@ def csin(x):
 
 @refs_gl.run_window
 def setup(ctx):
+    ctx = refs_gl.provide_video_time(ctx, fps=60)
     time = ctx[refs_gl.FrameTimeProvider]
-    view = refs_gl.DraggableView(ctx, Vec2(0, 0))
+    view = refs_gl.DraggableView(ctx)
+    # view = refs_gl.DraggableView(ctx, center=Vec2(-208.61060767044705, 30.294525500086095), zoom=165)
     img = refs_gl.ShaderImage(
         Path("shaders/mandelbrot.glsl").read_text(),
         uniforms={
