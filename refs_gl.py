@@ -22,7 +22,7 @@ def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
         t = ctx[FrameTimeProvider]() - start_time
         # Only depend on frame time to avoid race condition between watchers.
         return start + (target.quiet_get() - start)*curve(min(t / duration, 1.0))
-    @tweened.setter
+    @tweened.set_value
     def force(value):
         nonlocal start
         start = value

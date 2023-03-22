@@ -12,50 +12,55 @@ def _track_into(t):
     finally:
         _current_tracker = old
 
-class _ReadableRef:
-    def __call__(self, *args):
+class ReadableReactive:
+    def __init__(self):
+        self._watchers = []
+    def __call__(self):
         if _current_tracker is not None: _current_tracker.add(self)
-        if not args: return self._value
-        v = self._value
-        for i in args: v = v[i]
-        return v
+        return self.getter()
     def watch(self, f):
         self._watchers.append(f)
         return f
-    def quiet_get(self):
-        return self._value
-
-class _WriteableRef:
-    def set(self, x):
-        self.quiet_set(x)
+    def touch(self):
         for w in self._watchers: w()
+    def quiet_get(self):
+        return self.getter()
+
+class Reactive(ReadableReactive):
+    def set(self, x):
+        self.setter(x, self.touch)
     def quiet_set(self, x):
-        self._value = x
+        self.setter(x, lambda: None)
     def map(self, f):
         self.set(f(self()))
 
 def as_ref(x):
-    if isinstance(x, _ReadableRef):
+    if isinstance(x, ReadableReactive):
         return x
     return Ref(x)
 
-class Ref(_ReadableRef, _WriteableRef):
+class Ref(Reactive):
     def __init__(self, value):
         self._value = value
-        self._watchers = []
+        super().__init__()
+    def getter(self):
+        return self._value
+    def setter(self, x, touch):
+        self._value = x
+        touch()
 
 class DataRef(Ref):
-    def set(self, x):
+    def setter(self, x, touch):
         if x == self._value:
             return
-        super().set(x)
+        super().setter(x, touch)
 
 def computed(*args):
     def builder(f):
         return Computed(f, *args)
     return builder
 
-class Computed(_ReadableRef):
+class Computed(ReadableReactive):
     def __init__(self, function, deps=None):
         if deps is None:
             deps = set()
@@ -64,24 +69,25 @@ class Computed(_ReadableRef):
         else:
             self._value = function()
         for ref in deps:
-            ref.watch(self._expire)
+            ref.watch(self.touch)
         self._expired = False
         self._function = function
-        self._watchers = []
-    def _expire(self):
+        ReadableReactive.__init__(self)
+    def touch(self):
         self._expired = True
-        for w in self._watchers: w()
-    def __call__(self, *args):
+        super().touch()
+    def getter(self):
         if self._expired:
             # Do not track when updating to avoid picking up transitive deps.
             with _track_into(None):
                 self._value = self._function()
             self._expired = False
-        return super().__call__(*args)
+        return self._value
 
-class WriteableComputed(Computed, _WriteableRef):
-    def setter(self, f):
+class WriteableComputed(Computed, Reactive):
+    def set_value(self, f):
         self._set_transform = f
         return f
-    def set(self, value):
-        return super().set(self._set_transform(value))
+    def setter(self, value, touch):
+        self._value = self._set_transform(value)
+        touch()
