@@ -125,10 +125,8 @@ def provide_wall_time(ctx):
         FrameTimeProvider: wall_time,
     })
 
-def provide_video_time(ctx, *, fps):
-    return ctx.provide({
-        FrameTimeProvider: Computed(lambda: ctx[FrameCountProvider]() / fps),
-    })
+def video_time(ctx, *, fps):
+    return Computed(lambda: ctx[FrameCountProvider]() / fps)
 
 def run_window(f):
     # window = pyglet.window.Window(config=Config(
