@@ -123,7 +123,7 @@ class KeyPress: pass
 class Context:
     def __init__(self, data):
         self._data = data
-    def provide(self, data):
+    def __or__(self, data):
         child = self._data.copy()
         child.update(data)
         return Context(child)
@@ -136,9 +136,9 @@ def provide_wall_time(ctx):
     @ctx[FrameCount].watch
     def clock():
         wall_time.set(time() - start_time)
-    return ctx.provide({
+    return ctx | {
         FrameTime: wall_time,
-    })
+    }
 
 def video_time(ctx, *, fps):
     return Computed(lambda: ctx[FrameCount]() / fps)

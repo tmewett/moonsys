@@ -12,7 +12,7 @@ def csin(x):
 
 @refs_gl.run_window
 def setup(ctx):
-    ctx = ctx.provide({refs_gl.FrameTime: refs_gl.video_time(ctx, fps=60)})
+    ctx = ctx | {refs_gl.FrameTime: refs_gl.video_time(ctx, fps=60)}
     time = ctx[refs_gl.FrameTime]
     view = refs_gl.DraggableView(ctx)
     a = refs_gl.key_toggle(ctx, 'A')
