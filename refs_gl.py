@@ -14,6 +14,7 @@ def clear(*, color, depth):
     glClearDepth(depth)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
+# TODO Rewrite as a custom Reactive to see if WriteableComputed adds anything.
 def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
     start = target()
     start_time = 0.0
@@ -88,6 +89,21 @@ class Shader:
                 # print(f"set uniform {name!r} to {ref()}")
             self._program[name] = ref()
 
+def just_value(ref, value):
+    f = Ref(ref())
+    @ref.watch
+    def _():
+        if ref() == value:
+            f.set(ref())
+    return f
+
+def key_toggle(ctx, key, init=False):
+    t = Ref(init)
+    @just_value(ctx[KeyPressProvider], key).watch
+    def _():
+        t.set(not t())
+    return t
+
 class GLState:
     def __init__(self):
         self.shader = DataRef(None)
@@ -104,6 +120,7 @@ class FrameTimeProvider: pass
 class MousePositionProvider: pass
 class LeftMouseProvider: pass
 class DrawnImageProvider: pass
+class KeyPressProvider: pass
 
 class Context:
     def __init__(self, data):
@@ -146,6 +163,7 @@ def run_window(f):
     v_MousePositionProvider = Ref(None)
     v_LeftMouseProvider = Ref(False)
     v_DrawnImageProvider = Ref(False)
+    v_KeyPressProvider = Ref(None)
     mouse_diff = Ref(Vec2(0, 0))
     scroll_diff = Ref(Vec2(0, 0))
     ctx = Context({
@@ -156,6 +174,7 @@ def run_window(f):
         MousePositionProvider: v_MousePositionProvider,
         LeftMouseProvider: v_LeftMouseProvider,
         DrawnImageProvider: v_DrawnImageProvider,
+        KeyPressProvider: v_KeyPressProvider,
         'mouse_diff': mouse_diff,
         'scroll_diff': scroll_diff,
     })
@@ -164,6 +183,9 @@ def run_window(f):
     def on_draw():
         v_FrameCountProvider.map(lambda x: x + 1)
         v_DrawnImageProvider.set(buffer_manager.get_color_buffer())
+    @window.event
+    def on_key_press(symbol, modifiers):
+        v_KeyPressProvider.set(pyglet.window.key.symbol_string(symbol))
     @window.event
     def on_mouse_motion(x, y, dx, dy):
         v_MousePositionProvider.set(Vec2(x, y))

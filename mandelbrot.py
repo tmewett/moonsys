@@ -15,6 +15,7 @@ def setup(ctx):
     ctx = ctx.provide({refs_gl.FrameTimeProvider: refs_gl.video_time(ctx, fps=60)})
     time = ctx[refs_gl.FrameTimeProvider]
     view = refs_gl.DraggableView(ctx)
+    a = refs_gl.key_toggle(ctx, 'A')
     # view = refs_gl.DraggableView(ctx, center=Vec2(-208.61060767044705, 30.294525500086095), zoom=165)
     img = refs_gl.ShaderImage(
         Path("shaders/mandelbrot.glsl").read_text(),
@@ -27,4 +28,6 @@ def setup(ctx):
     )
     @time.watch
     def draw():
+        if a():
+            print("A")
         img.draw(ctx)
