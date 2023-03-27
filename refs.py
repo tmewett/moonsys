@@ -60,6 +60,11 @@ def computed(*args):
         return Computed(f, *args)
     return builder
 
+def writeable_computed(*args):
+    def builder(f):
+        return WriteableComputed(f, *args)
+    return builder
+
 class Computed(ReadableReactive):
     def __init__(self, function, deps=None):
         if deps is None:
@@ -72,7 +77,7 @@ class Computed(ReadableReactive):
             ref.watch(self.touch)
         self._expired = False
         self._function = function
-        ReadableReactive.__init__(self)
+        super().__init__()
     def touch(self):
         self._expired = True
         super().touch()
@@ -85,9 +90,9 @@ class Computed(ReadableReactive):
         return self._value
 
 class WriteableComputed(Computed, Reactive):
-    def set_value(self, f):
-        self._set_transform = f
+    def on_set(self, f):
+        self._on_set = f
         return f
     def setter(self, value, touch):
-        self._value = self._set_transform(value)
+        self._on_set(value)
         touch()

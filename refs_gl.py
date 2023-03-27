@@ -6,7 +6,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, Computed, DataRef, Ref, WriteableComputed
+from refs import as_ref, computed, DataRef, Ref, writeable_computed
 
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -18,17 +18,17 @@ def clear(*, color, depth):
 def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
     start = target()
     start_time = 0.0
-    @WriteableComputed
+    # Only depend on frame time - the target change watcher needs to run
+    # first. (But I tried without and it worked?)
+    @writeable_computed({ctx[FrameTime]})
     def tweened():
         t = ctx[FrameTime]() - start_time
-        # Only depend on frame time to avoid race condition between watchers.
-        return start + (target.quiet_get() - start)*curve(min(t / duration, 1.0))
-    @tweened.set_value
+        return start + (target() - start)*curve(min(t / duration, 1.0))
+    @tweened.on_set
     def force(value):
         nonlocal start
         start = value
-        target.quiet_set(value)
-        return value
+        target.set(value)
     @target.watch
     def change():
         nonlocal start, start_time
@@ -44,8 +44,8 @@ class DraggableView:
         s = tween(ctx, s_target)
         self.anchor = self.center()
         self.s_0 = Vec2(0.0, 0.0)
-        self.zoom = Computed(lambda: scroll_factor ** s())
-        self.center = Computed(lambda: self.anchor + self.s_0 * 1 / self.zoom())
+        self.zoom = computed()(lambda: scroll_factor ** s())
+        self.center = computed()(lambda: self.anchor + self.s_0 * 1 / self.zoom())
         @ctx['mouse_diff'].watch
         def _():
             if not ctx[LeftMouse](): return
@@ -141,7 +141,7 @@ def provide_wall_time(ctx):
     }
 
 def video_time(ctx, *, fps):
-    return Computed(lambda: ctx[FrameCount]() / fps)
+    return computed()(lambda: ctx[FrameCount]() / fps)
 
 def run_window(f):
     # window = pyglet.window.Window(config=Config(
