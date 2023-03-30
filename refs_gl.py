@@ -1,12 +1,13 @@
 import math
 from dataclasses import dataclass, field
+from collections import defaultdict
 from time import time
 
 import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, DataRef, Ref, writeable_computed
+from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed
 
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -89,20 +90,12 @@ class Shader:
                 # print(f"set uniform {name!r} to {ref()}")
             self._program[name] = ref()
 
-def just_value(ref, value):
-    f = Ref(ref())
-    @ref.watch
+def key_press(ctx, key):
+    p = Ref(True)
+    @ctx[KeyMap][key].watch
     def _():
-        if ref() == value:
-            f.set(ref())
-    return f
-
-def key_toggle(ctx, key, init=False):
-    t = Ref(init)
-    @just_value(ctx[KeyPress], key).watch
-    def _():
-        t.set(not t())
-    return t
+        if ctx[KeyMap][key](): p.set(True)
+    return read_only(p)
 
 class GLState:
     def __init__(self):
@@ -118,7 +111,7 @@ class FrameTime: pass
 class MousePosition: pass
 class LeftMouse: pass
 class DrawnImage: pass
-class KeyPress: pass
+class KeyMap: pass
 
 class Context:
     def __init__(self, data):
@@ -161,7 +154,7 @@ def run_window(f):
     v_MousePosition = Ref(None)
     v_LeftMouse = Ref(False)
     v_DrawnImage = Ref(False)
-    v_KeyPress = Ref(None)
+    v_KeyMap = defaultdict(lambda: Ref(False))
     mouse_diff = Ref(Vec2(0, 0))
     scroll_diff = Ref(Vec2(0, 0))
     ctx = Context({
@@ -172,7 +165,7 @@ def run_window(f):
         MousePosition: v_MousePosition,
         LeftMouse: v_LeftMouse,
         DrawnImage: v_DrawnImage,
-        KeyPress: v_KeyPress,
+        KeyMap: v_KeyMap,
         'mouse_diff': mouse_diff,
         'scroll_diff': scroll_diff,
     })
@@ -183,7 +176,10 @@ def run_window(f):
         v_DrawnImage.set(buffer_manager.get_color_buffer())
     @window.event
     def on_key_press(symbol, modifiers):
-        v_KeyPress.set(pyglet.window.key.symbol_string(symbol))
+        v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(True)
+    @window.event
+    def on_key_release(symbol, modifiers):
+        v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
     @window.event
     def on_mouse_motion(x, y, dx, dy):
         v_MousePosition.set(Vec2(x, y))

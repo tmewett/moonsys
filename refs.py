@@ -49,6 +49,15 @@ class Ref(Reactive):
         self._value = x
         touch()
 
+class read_only(ReadableReactive):
+    def __init__(self, ref):
+        self._ref = ref
+        self._ref.watch(self.touch)
+        super().__init__()
+    def getter(self):
+        # Don't call ref; we don't want to pick it up in a computed.
+        return self._ref._value
+
 class DataRef(Ref):
     def setter(self, x, touch):
         if x == self._value:
