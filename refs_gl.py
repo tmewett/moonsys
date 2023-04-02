@@ -136,6 +136,25 @@ def provide_wall_time(ctx):
 def video_time(ctx, *, fps):
     return computed()(lambda: ctx[FrameCount]() / fps)
 
+def warped_time(time, *, speed):
+    base_source = base = 0.0
+    speed = as_ref(speed)
+    controlled = computed({time})(lambda: base + (time() - base_source) * speed())
+    @speed.watch
+    def rebase():
+        nonlocal base, base_source
+        base = controlled()
+        base_source = time()
+    rebase()
+    return controlled
+
+def time_control(ctx):
+    speed = Ref(1.0)
+    key_press(ctx, 'SPACE').watch(lambda: speed.set(0.0 if speed() != 0.0 else 1.0))
+    key_press(ctx, 'LEFT').watch(lambda: speed.set(-3.0))
+    key_press(ctx, 'RIGHT').watch(lambda: speed.set(3.0))
+    return warped_time(ctx[FrameTime], speed=speed)
+
 def run_window(f):
     # window = pyglet.window.Window(config=Config(
         # double_buffer=True,

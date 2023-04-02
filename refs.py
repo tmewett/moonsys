@@ -59,10 +59,10 @@ class read_only(ReadableReactive):
         return self._ref._value
 
 class DataRef(Ref):
-    def setter(self, x, touch):
+    def set(self, x):
         if x == self._value:
             return
-        super().setter(x, touch)
+        super().set(x)
 
 def computed(*args):
     def builder(f):
