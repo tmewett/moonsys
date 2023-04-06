@@ -7,10 +7,21 @@ class Component:
     def set_props(self, *a, **kw):
         # self.__class__._define_props(*a, **kw)
         # TODO empty kw to _define_props don't show up
+        if hasattr(self, 'props'):
+            self._last_props = self.props
         self.props = signature(self.__class__._define_props).bind(*a, **kw).arguments
     def do(self):
         pass
+    def should_refresh(self):
+        return (
+            not hasattr(self, '_last_props')
+            or set(self.props.keys()) != set(self._last_props.keys())
+            or any(self.props[p] is not self._last_props[p] for p in self.props.keys())
+        )
     def refresh(self):
+        if self.should_refresh():
+            self.on_refresh()
+    def on_refresh(self):
         self.undo()
         self.do()
     def undo(self):
@@ -21,7 +32,7 @@ class Debug(Component):
         self.props = props
     def do(self):
         print(f"     do {id(self)} props={self.props}")
-    def refresh(self):
+    def on_refresh(self):
         print(f"refresh {id(self)} props={self.props}")
     def undo(self):
         print(f"   undo {id(self)} props={self.props}")
@@ -33,7 +44,7 @@ class DelegatedComponent(Component):
         self._delegate = self.get_children()
         self._delegate.parent = self
         self._delegate.do()
-    def refresh(self):
+    def on_refresh(self):
         self._slot_i = 0
         new = self.get_children()
         if isinstance(new, type(self._delegate)):
@@ -65,7 +76,7 @@ class DelegatedComponent(Component):
         else:
             old = self._slots[self._slot_i]
             if not issubclass(c, type(old)):
-                raise RuntimeError()
+                raise RuntimeError("different component type given to corresponding use() in last run")
             old.set_props(*a, then=set_value, **kw)
             old.refresh()
             self._slot_i += 1
@@ -77,7 +88,7 @@ class Sequence(Component):
     def do(self):
         self._last = self.props['components'][:]
         for c in self.props['components']: c.do()
-    def refresh(self):
+    def on_refresh(self):
         unmounting = False
         for (old, new), i in enumerate(zip(self._last, self.props['components'])):
             if not isinstance(new, type(old)):
