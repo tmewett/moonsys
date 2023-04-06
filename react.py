@@ -1,3 +1,4 @@
+from functools import cache
 from inspect import signature
 
 class Component:
@@ -5,6 +6,7 @@ class Component:
         self.set_props(*a, **kw)
     def set_props(self, *a, **kw):
         # self.__class__._define_props(*a, **kw)
+        # TODO empty kw to _define_props don't show up
         self.props = signature(self.__class__._define_props).bind(*a, **kw).arguments
     def do(self):
         pass
@@ -46,56 +48,82 @@ class DelegatedComponent(Component):
         self._delegate.undo()
         for h in reversed(self._slots):
             h.undo()
-    def use(self, c, **props):
+    def use(self, c, *a, **kw):
+        # There's so much *a, **kw stuff in the hooks parts because we are
+        # trying to ergonomically override an callable's argument. We could have
+        # `props={.} then=.` but that would be less neat.
+        if 'then' in kw:
+            raise ArgumentError()
+        value = None
+        def set_value(x):
+            nonlocal value
+            value = x
         if self._slot_i is None:
-            self._slots.append(c(**props))
+            self._slots.append(c(*a, then=set_value, **kw))
             self._slots[-1].do()
-            return self._slots[-1].get_value()
+            return value
         else:
             old = self._slots[self._slot_i]
             if not issubclass(c, type(old)):
                 raise RuntimeError()
-            old.props = props
+            old.set_props(*a, then=set_value, **kw)
             old.refresh()
             self._slot_i += 1
-            return old.get_value()
+            return value
 
-class With(DelegatedComponent):
-    def _define_props(component, then):
+class Sequence(Component):
+    def _define_props(components):
         pass
     def do(self):
-        self._component = self.props['component']
-        self._component.do()
-        super().do()
+        self._last = self.props['components'][:]
+        for c in self.props['components']: c.do()
     def refresh(self):
-        new = self.props['component']
-        if isinstance(new, type(self._component)):
-            self._component.props = new.props
-            self._component.refresh()
-        else:
-            self._component.undo()
-            new.do()
-            self._component = new
-        super().refresh()
+        unmounting = False
+        for (old, new), i in enumerate(zip(self._last, self.props['components'])):
+            if not isinstance(new, type(old)):
+                # -1 so i is the index of the last of same type.
+                i -= 1
+                break
+            old.props = new.props
+            old.refresh()
+        for c in reversed(self._last[i+1:]):
+            c.undo()
+        for c in self.props['components'][i+1:]:
+            c.parent = self
+            c.do()
+        self._last = self.props['components'][:]
     def undo(self):
-        super().undo()
-        self._component.undo()
+        for c in self.props['components']: c.undo()
+
+class Defer(DelegatedComponent):
+    def _define_props(f):
+        pass
     def get_children(self):
-        return self.props['then'](self._component.get_value())
+        return self.props['f']()
+
+class _WithBase(DelegatedComponent):
+    def _define_props(*a, then, **kw):
+        pass
+    def get_children(self):
+        if 'a' not in self.props:
+            self.props['a'] = []
+        if 'kw' not in self.props:
+            self.props['kw'] = {}
+        value = self.use(self.__class__._hook, *self.props['a'], **self.props['kw'])
+        return self.props['then'](value)
+
+@cache
+def With(cls):
+    return type(f"With({cls.__name__})", (_WithBase,), {'_hook': cls})
 
 class Memo(Component):
-    def _define_props(f, deps=None):
+    def _define_props(f, deps=None, *, then):
         pass
     def do(self):
-        self._last_deps = self.props['deps']
-        self._value = self.props['f']()
-    # TODO refresh
-    def get_value(self):
-        if self.props['deps'] is not None and self._last_deps != self.props['deps']:
+        if not hasattr(self, '_last_deps') or (self.props['deps'] is not None and self._last_deps != self.props['deps']):
             self._last_deps = self.props['deps']
             self._value = self.props['f']()
-            print("reran memo")
-        return self._value
+        self.props['then'](self._value)
 
 class Provider(DelegatedComponent):
     def _define_props(key, value, children):
@@ -142,13 +170,12 @@ class FunctionComponent(DelegatedComponent):
 def component(f):
     return lambda *a, **kw: FunctionComponent(f, *a, **kw)
 
-def use(c, **props):
-    return FunctionComponent._current.use(c, **props)
+def use(*a, **kw):
+    return FunctionComponent._current.use(*a, **kw)
 
 @component
 def func(n):
-    nn = use(Memo, f=lambda: n*2, deps=[n])
-    return Debug(n=nn)
+    return With(Memo)(lambda: n*2, [n], then=lambda nn: Debug(n=nn))
 
 f = func(n=1)
 f.do()
