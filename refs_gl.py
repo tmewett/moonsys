@@ -1,13 +1,15 @@
 import math
 from dataclasses import dataclass, field
 from collections import defaultdict
+from functools import partial
 from time import time
+from typing import Callable
 
 import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed
+from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed, Sequence
 
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -61,34 +63,36 @@ class DraggableView:
             self.s_0 = -m
             s_target.map(lambda x: x + amount)
 
-class ShaderImage:
-    def __init__(self, fragment_src, *, uniforms):
-        self.shader = Shader(sources={
-            'vertex': "#version 330\nin vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }",
-            'fragment': fragment_src,
-        }, uniforms=uniforms)
-        self._vlist = self.shader._program.vertex_list_indexed(4, pyglet.gl.GL_TRIANGLES,
-            (0, 1, 2, 0, 2, 3),
-            pos=('f', (-1.0,1.0, -1.0,-1.0, 1.0,-1.0, 1.0,1.0)))
-    def draw(self, ctx):
-        ctx[GLState].shader.set(self.shader)
-        self._vlist.draw(pyglet.gl.GL_TRIANGLES)
-
-class Shader:
-    def __init__(self, *, sources, uniforms):
-        self._program = pyglet.graphics.shader.ShaderProgram(
-            *[pyglet.graphics.shader.Shader(src, type) for type, src in sources.items()]
-        )
-        self.uniforms = {
-            name: as_ref(value) for name, value in uniforms.items()
-            if name in self._program.uniforms
-        }
-        for name, ref in self.uniforms.items():
-            @ref.watch
-            def set_uniform(name=name, ref=ref):
-                self._program[name] = ref()
-                # print(f"set uniform {name!r} to {ref()}")
-            self._program[name] = ref()
+def ShaderImage(ctx, fragment_src, *, uniforms):
+    _program = pyglet.graphics.shader.ShaderProgram(
+        pyglet.graphics.shader.Shader("#version 330\nin vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }", 'vertex'),
+        pyglet.graphics.shader.Shader(fragment_src, 'fragment'),
+    )
+    uniform_refs = {
+        name: as_ref(value) for name, value in uniforms.items()
+        if name in _program.uniforms
+    }
+    _new_uniforms = {}
+    uniform_watchers = []
+    def set_uniform(name, ref):
+        _new_uniforms[name] = ref()
+        # print(f"set uniform {name!r} to {ref()}")
+    for name, ref in uniform_refs.items():
+        _program[name] = ref()
+        uniform_watchers.append(ref.Watch(partial(set_uniform, name, ref)))
+    _vlist = _program.vertex_list_indexed(4, pyglet.gl.GL_TRIANGLES,
+        (0, 1, 2, 0, 2, 3),
+        pos=('f', (-1.0,1.0, -1.0,-1.0, 1.0,-1.0, 1.0,1.0)))
+    def draw():
+        _program.use()
+        for name, value in _new_uniforms.items():
+            _program[name] = value
+        _new_uniforms.clear()
+        _vlist.draw(pyglet.gl.GL_TRIANGLES)
+    return Sequence([
+        *uniform_watchers,
+        OnEvent(ctx, 'on_draw', draw),
+    ])
 
 def key_press(ctx, key):
     p = Ref(True)
@@ -155,67 +159,95 @@ def time_control(ctx):
     key_press(ctx, 'RIGHT').watch(lambda: speed.set(3.0))
     return warped_time(ctx[FrameTime], speed=speed)
 
-def run_window(f):
-    # window = pyglet.window.Window(config=Config(
-        # double_buffer=True,
-        # sample_buffers=1,
-        # samples=8,
-    # ))
-    window = pyglet.window.Window()
-    buffer_manager = pyglet.image.get_buffer_manager()
-    print(window.config)
-    start_time = time()
+_handler_sets = {}
+@dataclass
+class OnEvent:
+    ctx: dict
+    name: str
+    handler: Callable
+    def do(self):
+        if self.name not in _handler_sets:
+            window = self.ctx[pyglet.window.Window]
+            hset = {self.handler}
+            def do_all(*a, **kw):
+                for h in hset: h(*a, **kw)
+                return True
+            window._event_stack[0][self.name] = do_all
+            _handler_sets[self.name] = hset
+        else:
+            _handler_sets[self.name].add(self.handler)
+    def undo(self):
+        _handler_sets[self.name].remove(self.handler)
 
-    v_GLState = GLState()
-    v_Region = Region(Vec2(window.width, window.height))
+def provide(ctx, args):
+    return ctx | {type(x): x for x in args}
+
+def Window(setup):
+    window = pyglet.window.Window()
+    window._event_stack = [{}]
     v_FrameCount = Ref(0)
-    # v_FrameTime = Ref(0.0)
-    v_MousePosition = Ref(None)
-    v_LeftMouse = Ref(False)
-    v_DrawnImage = Ref(False)
-    v_KeyMap = defaultdict(lambda: Ref(False))
-    mouse_diff = Ref(Vec2(0, 0))
-    scroll_diff = Ref(Vec2(0, 0))
-    ctx = Context({
-        GLState: v_GLState,
-        Region: v_Region,
+    ctx = {
+        type(window): window,
         FrameCount: v_FrameCount,
-        # FrameTime: v_FrameTime,
-        MousePosition: v_MousePosition,
-        LeftMouse: v_LeftMouse,
-        DrawnImage: v_DrawnImage,
-        KeyMap: v_KeyMap,
-        'mouse_diff': mouse_diff,
-        'scroll_diff': scroll_diff,
-    })
-    f(ctx)
-    @window.event
-    def on_draw():
-        v_FrameCount.map(lambda x: x + 1)
-        v_DrawnImage.set(buffer_manager.get_color_buffer())
-    @window.event
-    def on_key_press(symbol, modifiers):
-        v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(True)
-    @window.event
-    def on_key_release(symbol, modifiers):
-        v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
-    @window.event
-    def on_mouse_motion(x, y, dx, dy):
-        v_MousePosition.set(Vec2(x, y))
-        mouse_diff.set(Vec2(dx, dy))
-    @window.event
-    def on_mouse_drag(x, y, dx, dy, *_):
-        v_MousePosition.set(Vec2(x, y))
-        mouse_diff.set(Vec2(dx, dy))
-    @window.event
-    def on_mouse_press(x, y, button, modifiers):
-        if button == pyglet.window.mouse.LEFT:
-            v_LeftMouse.set(True)
-    @window.event
-    def on_mouse_release(x, y, button, modifiers):
-        if button == pyglet.window.mouse.LEFT:
-            v_LeftMouse.set(False)
-    @window.event
-    def on_mouse_scroll(x, y, sx, sy):
-        scroll_diff.set(Vec2(sx, sy))
-    pyglet.app.run()
+    }
+    return Sequence([setup(ctx), OnEvent(ctx, 'on_refresh', lambda dt: v_FrameCount.set(v_FrameCount() + 1))])
+
+# def run_window1(f):
+#     window = pyglet.window.Window()
+#     buffer_manager = pyglet.image.get_buffer_manager()
+#     print(window.config)
+#     start_time = time()
+
+#     v_GLState = GLState()
+#     v_Region = Region(Vec2(window.width, window.height))
+#     v_FrameCount = Ref(0)
+#     # v_FrameTime = Ref(0.0)
+#     v_MousePosition = Ref(None)
+#     v_LeftMouse = Ref(False)
+#     v_DrawnImage = Ref(False)
+#     v_KeyMap = defaultdict(lambda: Ref(False))
+#     mouse_diff = Ref(Vec2(0, 0))
+#     scroll_diff = Ref(Vec2(0, 0))
+#     ctx = Context({
+#         GLState: v_GLState,
+#         Region: v_Region,
+#         FrameCount: v_FrameCount,
+#         # FrameTime: v_FrameTime,
+#         MousePosition: v_MousePosition,
+#         LeftMouse: v_LeftMouse,
+#         DrawnImage: v_DrawnImage,
+#         KeyMap: v_KeyMap,
+#         'mouse_diff': mouse_diff,
+#         'scroll_diff': scroll_diff,
+#     })
+#     f(ctx)
+#     @window.event
+#     def on_draw():
+#         v_FrameCount.map(lambda x: x + 1)
+#         v_DrawnImage.set(buffer_manager.get_color_buffer())
+#     @window.event
+#     def on_key_press(symbol, modifiers):
+#         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(True)
+#     @window.event
+#     def on_key_release(symbol, modifiers):
+#         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
+#     @window.event
+#     def on_mouse_motion(x, y, dx, dy):
+#         v_MousePosition.set(Vec2(x, y))
+#         mouse_diff.set(Vec2(dx, dy))
+#     @window.event
+#     def on_mouse_drag(x, y, dx, dy, *_):
+#         v_MousePosition.set(Vec2(x, y))
+#         mouse_diff.set(Vec2(dx, dy))
+#     @window.event
+#     def on_mouse_press(x, y, button, modifiers):
+#         if button == pyglet.window.mouse.LEFT:
+#             v_LeftMouse.set(True)
+#     @window.event
+#     def on_mouse_release(x, y, button, modifiers):
+#         if button == pyglet.window.mouse.LEFT:
+#             v_LeftMouse.set(False)
+#     @window.event
+#     def on_mouse_scroll(x, y, sx, sy):
+#         scroll_diff.set(Vec2(sx, sy))
+#     pyglet.app.run()

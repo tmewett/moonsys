@@ -1,4 +1,6 @@
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Callable
 
 _current_tracker = None
 
@@ -14,12 +16,14 @@ def _track_into(t):
 
 class ReadableReactive:
     def __init__(self):
-        self._watchers = []
+        self._watchers = set()
     def __call__(self):
         if _current_tracker is not None: _current_tracker.add(self)
         return self.getter()
+    def Watch(self, f):
+        return _Watch(self, f)
     def watch(self, f):
-        self._watchers.append(f)
+        self._watchers.add(f)
         return f
     def touch(self):
         for w in self._watchers: w()
@@ -76,20 +80,24 @@ def writeable_computed(*args):
 
 class Computed(ReadableReactive):
     def __init__(self, function, deps=None):
+        self._function = function
         if deps is None:
             deps = set()
             with _track_into(deps):
                 self._value = function()
+            self._expired = False
+            self._dep_watchers = [ref.Watch(self.touch) for ref in deps]
         else:
-            self._value = function()
-        for ref in deps:
-            ref.watch(self.touch)
-        self._expired = False
-        self._function = function
+            self._expired = True
         super().__init__()
     def touch(self):
         self._expired = True
         super().touch()
+    def do(self):
+        self.touch()
+        for e in self._dep_watchers: e.do()
+    def undo(self):
+        for e in self._dep_watchers: e.undo()
     def getter(self):
         if self._expired:
             # Do not track when updating to avoid picking up transitive deps.
@@ -105,3 +113,51 @@ class WriteableComputed(Computed, Reactive):
     def setter(self, value, touch):
         self._on_set(value)
         touch()
+
+class Effect:
+    pass
+
+@dataclass
+class _Watch:
+    ref: Ref
+    f: Callable
+    def do(self):
+        self.ref._watchers.add(self.f)
+    def undo(self):
+        self.ref._watchers.remove(self.f)
+
+@dataclass
+class Sequence:
+    # ctx: dict
+    effects: list
+    def do(self):
+        for e in self.effects: e.do()
+    def undo(self):
+        for e in self.effects: e.undo()
+
+@dataclass
+class Nothing:
+    def do(self):
+        pass
+    def undo(self):
+        pass
+
+@dataclass
+class _EffectRef:
+    ref: Ref
+    def _redo(self):
+        self.undo()
+        self.do()
+    def do(self):
+        self._effect = self.ref()
+        self._effect.do()
+    def undo(self):
+        self._effect.undo()
+
+def EffectRef(ref):
+    er = _EffectRef(ref)
+    return Sequence([er, ref.Watch(er._redo)])
+
+def If(ref, e):
+    t = computed()(lambda: e if ref() else Nothing())
+    return Sequence([t, EffectRef(t)])
