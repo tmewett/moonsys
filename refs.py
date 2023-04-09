@@ -86,9 +86,10 @@ class Computed(ReadableReactive):
             with _track_into(deps):
                 self._value = function()
             self._expired = False
-            self._dep_watchers = [ref.Watch(self.touch) for ref in deps]
         else:
             self._expired = True
+        self._dep_watchers = [ref.Watch(self.touch) for ref in deps]
+        self.wire = self
         super().__init__()
     def touch(self):
         self._expired = True

@@ -32,12 +32,13 @@ def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
         nonlocal start
         start = value
         target.set(value)
-    @target.watch
+    @target.Watch
     def change():
         nonlocal start, start_time
         start = tweened()
         start_time = ctx[FrameTime]()
     change()
+    tweened.wire = Sequence([tweened.wire, change])
     return tweened
 
 class DraggableView:
@@ -49,19 +50,20 @@ class DraggableView:
         self.s_0 = Vec2(0.0, 0.0)
         self.zoom = computed()(lambda: scroll_factor ** s())
         self.center = computed()(lambda: self.anchor + self.s_0 * 1 / self.zoom())
-        @ctx['mouse_diff'].watch
-        def _():
+        @ctx['mouse_diff'].Watch
+        def on_mouse():
             if not ctx[LeftMouse](): return
             self.anchor = self.center() - ctx['mouse_diff']() / self.zoom()
             self.s_0 = Vec2(0.0, 0.0)
-            s.map(lambda x: x)
-        @ctx['scroll_diff'].watch
-        def _():
+            s.touch()
+        @ctx['scroll_diff'].Watch
+        def on_scroll():
             amount = ctx['scroll_diff']().y
             m = (ctx[MousePosition]() - ctx[Region].size / 2)
             self.anchor = self.center() + m / self.zoom()
             self.s_0 = -m
             s_target.map(lambda x: x + amount)
+        self.wire = Sequence([self.zoom.wire, s.wire, self.center.wire, on_mouse, on_scroll])
 
 def ShaderImage(ctx, fragment_src, *, uniforms):
     _program = pyglet.graphics.shader.ShaderProgram(

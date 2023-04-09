@@ -21,7 +21,7 @@ def App(ctx):
         uniforms={'c': c},
     )
     return Sequence([
-        c,
+        c.wire,
         img,
     ])
 
