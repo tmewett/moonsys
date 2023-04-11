@@ -7,9 +7,9 @@ from refs import Ref, computed, Sequence
 def csin(x):
     return math.sin(x)/2 + 0.5
 
-def App(ctx):
+def setup(active, ctx):
     c = computed()(lambda: csin(ctx[refs_gl.FrameCount]() / 60))
-    img = refs_gl.ShaderImage(
+    refs_gl.draw_shader_image(active,
         ctx,
         """
             #version 330
@@ -20,10 +20,6 @@ def App(ctx):
         """,
         uniforms={'c': c},
     )
-    return Sequence([
-        c.wire,
-        img,
-    ])
 
-refs_gl.Window(App).do()
+refs_gl.define_window(setup)
 pyglet.app.run()

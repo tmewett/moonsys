@@ -20,9 +20,9 @@ class ReadableReactive:
     def __call__(self):
         if _current_tracker is not None: _current_tracker.add(self)
         return self.getter()
-    def Watch(self, f):
-        return _Watch(self, f)
-    def watch(self, f):
+    def watch(self, active):
+        return lambda f: _watch_ref(active, self, f)
+    def _watch(self, f):
         self._watchers.add(f)
         return f
     def touch(self):
@@ -56,7 +56,7 @@ class Ref(Reactive):
 class read_only(ReadableReactive):
     def __init__(self, ref):
         self._ref = ref
-        self._ref.watch(self.touch)
+        self._ref._watch(self.touch)
         super().__init__()
     def getter(self):
         # Don't call ref; we don't want to pick it up in a computed.
@@ -79,7 +79,7 @@ def writeable_computed(*args):
     return builder
 
 class Computed(ReadableReactive):
-    def __init__(self, function, deps=None):
+    def __init__(self, function, deps=None, *, active=True):
         self._function = function
         if deps is None:
             deps = set()
@@ -88,17 +88,14 @@ class Computed(ReadableReactive):
             self._expired = False
         else:
             self._expired = True
-        self._dep_watchers = [ref.Watch(self.touch) for ref in deps]
         self.wire = self
+        self.active = as_ref(active)
+        for ref in deps:
+            ref.watch(self.active)(self.touch)
         super().__init__()
     def touch(self):
         self._expired = True
         super().touch()
-    def do(self):
-        self.touch()
-        for e in self._dep_watchers: e.do()
-    def undo(self):
-        for e in self._dep_watchers: e.undo()
     def getter(self):
         if self._expired:
             # Do not track when updating to avoid picking up transitive deps.
@@ -118,14 +115,33 @@ class WriteableComputed(Computed, Reactive):
 class Effect:
     pass
 
-@dataclass
-class _Watch:
-    ref: Ref
-    f: Callable
-    def do(self):
-        self.ref._watchers.add(self.f)
-    def undo(self):
-        self.ref._watchers.remove(self.f)
+def effect(active):
+    def wrap(gen):
+        last = False
+        it = None
+        @active._watch
+        def update():
+            nonlocal last, it
+            if active() and not last:
+                it = gen()
+                next(it)
+                last = True
+            elif not active() and last:
+                try:
+                    next(it)
+                except StopIteration:
+                    pass
+                last = False
+        update()
+    return wrap
+
+def _watch_ref(active, ref, f):
+    @effect(active)
+    def _():
+        ref._watchers.add(f)
+        print(f"watch {ref} {f}")
+        yield
+        ref._watchers.remove(f)
 
 @dataclass
 class Sequence:
@@ -158,7 +174,3 @@ class _EffectRef:
 def EffectRef(ref):
     er = _EffectRef(ref)
     return Sequence([er, ref.Watch(er._redo)])
-
-def If(ref, e):
-    t = computed()(lambda: e if ref() else Nothing())
-    return Sequence([t, EffectRef(t)])

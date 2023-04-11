@@ -9,7 +9,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed, Sequence
+from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed, effect
 
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -18,7 +18,7 @@ def clear(*, color, depth):
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
 # TODO Rewrite as a custom Reactive to see if WriteableComputed adds anything.
-def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
+def tween(active, ctx, target, duration=0.1, curve=lambda t: t**0.7):
     start = target()
     start_time = 0.0
     # Only depend on frame time - the target change watcher needs to run
@@ -32,17 +32,16 @@ def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
         nonlocal start
         start = value
         target.set(value)
-    @target.Watch
+    @target.watch(active)
     def change():
         nonlocal start, start_time
         start = tweened()
         start_time = ctx[FrameTime]()
     change()
-    tweened.wire = Sequence([tweened.wire, change])
     return tweened
 
 class DraggableView:
-    def __init__(self, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
+    def __init__(self, active, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
         self.center = as_ref(center)
         s_target = as_ref(math.log(zoom, scroll_factor))
         s = tween(ctx, s_target)
@@ -50,13 +49,13 @@ class DraggableView:
         self.s_0 = Vec2(0.0, 0.0)
         self.zoom = computed()(lambda: scroll_factor ** s())
         self.center = computed()(lambda: self.anchor + self.s_0 * 1 / self.zoom())
-        @ctx['mouse_diff'].Watch
+        @ctx['mouse_diff'].watch(active)
         def on_mouse():
             if not ctx[LeftMouse](): return
             self.anchor = self.center() - ctx['mouse_diff']() / self.zoom()
             self.s_0 = Vec2(0.0, 0.0)
             s.touch()
-        @ctx['scroll_diff'].Watch
+        @ctx['scroll_diff'].watch(active)
         def on_scroll():
             amount = ctx['scroll_diff']().y
             m = (ctx[MousePosition]() - ctx[Region].size / 2)
@@ -65,7 +64,7 @@ class DraggableView:
             s_target.map(lambda x: x + amount)
         self.wire = Sequence([self.zoom.wire, s.wire, self.center.wire, on_mouse, on_scroll])
 
-def ShaderImage(ctx, fragment_src, *, uniforms):
+def draw_shader_image(active, ctx, fragment_src, *, uniforms):
     _program = pyglet.graphics.shader.ShaderProgram(
         pyglet.graphics.shader.Shader("#version 330\nin vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }", 'vertex'),
         pyglet.graphics.shader.Shader(fragment_src, 'fragment'),
@@ -75,13 +74,12 @@ def ShaderImage(ctx, fragment_src, *, uniforms):
         if name in _program.uniforms
     }
     _new_uniforms = {}
-    uniform_watchers = []
     def set_uniform(name, ref):
         _new_uniforms[name] = ref()
         # print(f"set uniform {name!r} to {ref()}")
     for name, ref in uniform_refs.items():
         _program[name] = ref()
-        uniform_watchers.append(ref.Watch(partial(set_uniform, name, ref)))
+        ref.watch(active)(partial(set_uniform, name, ref))
     _vlist = _program.vertex_list_indexed(4, pyglet.gl.GL_TRIANGLES,
         (0, 1, 2, 0, 2, 3),
         pos=('f', (-1.0,1.0, -1.0,-1.0, 1.0,-1.0, 1.0,1.0)))
@@ -91,17 +89,7 @@ def ShaderImage(ctx, fragment_src, *, uniforms):
             _program[name] = value
         _new_uniforms.clear()
         _vlist.draw(pyglet.gl.GL_TRIANGLES)
-    return Sequence([
-        *uniform_watchers,
-        OnEvent(ctx, 'on_draw', draw),
-    ])
-
-def key_press(ctx, key):
-    p = Ref(True)
-    @ctx[KeyMap][key].watch
-    def _():
-        if ctx[KeyMap][key](): p.set(True)
-    return read_only(p)
+    on_event(active, ctx, 'on_draw', draw)
 
 class GLState:
     def __init__(self):
@@ -162,29 +150,26 @@ def time_control(ctx):
     return warped_time(ctx[FrameTime], speed=speed)
 
 _handler_sets = {}
-@dataclass
-class OnEvent:
-    ctx: dict
-    name: str
-    handler: Callable
-    def do(self):
-        if self.name not in _handler_sets:
-            window = self.ctx[pyglet.window.Window]
-            hset = {self.handler}
+def on_event(active, ctx, name, handler):
+    @effect(active)
+    def _():
+        if name not in _handler_sets:
+            window = ctx[pyglet.window.Window]
+            hset = {handler}
             def do_all(*a, **kw):
-                for h in hset: h(*a, **kw)
+                for h in hset.copy(): h(*a, **kw)
                 return True
-            window._event_stack[0][self.name] = do_all
-            _handler_sets[self.name] = hset
+            window._event_stack[0][name] = do_all
+            _handler_sets[name] = hset
         else:
-            _handler_sets[self.name].add(self.handler)
-    def undo(self):
-        _handler_sets[self.name].remove(self.handler)
+            _handler_sets[name].add(handler)
+        yield
+        _handler_sets[name].remove(handler)
 
 def provide(ctx, args):
     return ctx | {type(x): x for x in args}
 
-def Window(setup):
+def define_window(setup):
     window = pyglet.window.Window()
     window._event_stack = [{}]
     v_FrameCount = Ref(0)
@@ -192,7 +177,10 @@ def Window(setup):
         type(window): window,
         FrameCount: v_FrameCount,
     }
-    return Sequence([setup(ctx), OnEvent(ctx, 'on_refresh', lambda dt: v_FrameCount.set(v_FrameCount() + 1))])
+    active = Ref(True)
+    on_event(active, ctx, 'on_refresh', lambda dt: v_FrameCount.set(v_FrameCount() + 1))
+    # on_event(active, ctx, 'on_close', lambda: active.set(False))
+    setup(read_only(active), ctx)
 
 # def run_window1(f):
 #     window = pyglet.window.Window()
