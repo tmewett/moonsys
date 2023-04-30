@@ -10,6 +10,13 @@ from pyglet.math import Vec2
 
 from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed, effect
 
+def watch_true(on, r):
+    def bind(f):
+        @r.watch(on)
+        def handler():
+            if r(): f()
+    return bind
+
 def clear(*, color, depth):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
     glClearColor(*color)
@@ -86,7 +93,7 @@ def draw_shader_image(active, ctx, fragment_src, *, uniforms):
             _program[name] = value
         _new_uniforms.clear()
         _vlist.draw(pyglet.gl.GL_TRIANGLES)
-    on_event(active, ctx, 'on_draw', draw)
+    ctx[Draws].add(active, draw)
 
 def video_time(ctx, *, fps):
     return computed()(lambda: ctx[FrameCount]() / fps)
@@ -95,7 +102,7 @@ def warped_time(time, *, speed):
     base_source = base = 0.0
     speed = as_ref(speed)
     controlled = computed({time})(lambda: base + (time() - base_source) * speed())
-    @speed.watch
+    @speed.watch()
     def rebase():
         nonlocal base, base_source
         base = controlled()
@@ -103,11 +110,20 @@ def warped_time(time, *, speed):
     rebase()
     return controlled
 
-def time_control(ctx):
+def time_control(on, ctx):
     speed = Ref(1.0)
-    key_press(ctx, 'SPACE').watch(lambda: speed.set(0.0 if speed() != 0.0 else 1.0))
-    key_press(ctx, 'LEFT').watch(lambda: speed.set(-3.0))
-    key_press(ctx, 'RIGHT').watch(lambda: speed.set(3.0))
+    @ctx[KeyMap]['SPACE'].watch(on)
+    def playpause():
+        if ctx[KeyMap]['SPACE']():
+            speed.set(0.0 if speed() != 0.0 else 1.0)
+    @ctx[KeyMap]['LEFT'].watch(on)
+    def rev():
+        if ctx[KeyMap]['LEFT']():
+            speed.set(-3.0)
+    @ctx[KeyMap]['RIGHT'].watch(on)
+    def ff():
+        if ctx[KeyMap]['RIGHT']():
+            speed.set(3.0)
     return warped_time(ctx[FrameTime], speed=speed)
 
 _handler_sets = {}
@@ -127,6 +143,14 @@ def on_event(active, ctx, name, handler):
         yield
         _handler_sets[name].remove(handler)
 
+class gatherer:
+    def __init__(self):
+        self._all = []
+    def add(self, on, x):
+        self._all.append([on, x])
+    def get(self):
+        return [x for on, x in self._all if on()]
+
 class GLState:
     def __init__(self):
         self.shader = DataRef(None)
@@ -140,6 +164,7 @@ class MousePositionChange: pass
 class ScrollChange: pass
 class LeftMouse: pass
 class KeyMap: pass
+class Draws: pass
 class Region:
     def __init__(self, size):
         self.size = size
@@ -155,6 +180,7 @@ def define_window(setup):
     v_ScrollChange = Ref(Vec2(0, 0))
     v_LeftMouse = Ref(False)
     v_KeyMap = defaultdict(lambda: Ref(False))
+    v_Draws = gatherer()
     v_Region = Region(Vec2(window.width, window.height))
     ctx = {
         type(window): window,
@@ -164,34 +190,37 @@ def define_window(setup):
         ScrollChange: v_ScrollChange,
         LeftMouse: v_LeftMouse,
         KeyMap: v_KeyMap,
+        Draws: v_Draws,
         Region: v_Region,
     }
     active = Ref(True)
-    on_event(active, ctx, 'on_refresh', lambda dt: v_FrameCount.set(v_FrameCount() + 1))
+    @window.event
+    def on_draw():
+        v_FrameCount.set(v_FrameCount() + 1)
+        for f in v_Draws.get(): f()
+    @window.event
     def on_mouse_motion(x, y, dx, dy):
         v_MousePosition.set(Vec2(x, y))
         v_MousePositionChange.set(Vec2(dx, dy))
-    on_event(active, ctx, 'on_mouse_motion', on_mouse_motion)
+    @window.event
     def on_mouse_drag(x, y, dx, dy, *_):
         v_MousePosition.set(Vec2(x, y))
         v_MousePositionChange.set(Vec2(dx, dy))
-    on_event(active, ctx, 'on_mouse_drag', on_mouse_drag)
+    @window.event
     def on_mouse_scroll(x, y, sx, sy):
         v_ScrollChange.set(Vec2(sx, sy))
-    on_event(active, ctx, 'on_mouse_scroll', on_mouse_scroll)
+    @window.event
     def on_mouse_press(x, y, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
             v_LeftMouse.set(True)
-    on_event(active, ctx, 'on_mouse_press', on_mouse_press)
+    @window.event
     def on_mouse_release(x, y, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
             v_LeftMouse.set(False)
-    on_event(active, ctx, 'on_mouse_release', on_mouse_release)
+    @window.event
     def on_key_press(symbol, modifiers):
         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(True)
-    on_event(active, ctx, 'on_key_press', on_key_press)
+    @window.event
     def on_key_release(symbol, modifiers):
         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
-    on_event(active, ctx, 'on_key_release', on_key_release)
-    on_event(active, ctx, 'on_close', lambda: active.set(False))
     setup(read_only(active), ctx)
