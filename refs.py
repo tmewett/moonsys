@@ -20,7 +20,9 @@ class ReadableReactive:
     def __call__(self):
         if _current_tracker is not None: _current_tracker.add(self)
         return self.getter()
-    def watch(self, active):
+    def watch(self, active=None):
+        if active is None:
+            return lambda f: self._watch(f)
         return lambda f: _watch_ref(active, self, f)
     def _watch(self, f):
         self._watchers.add(f)
