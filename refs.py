@@ -142,6 +142,7 @@ def _watch_ref(active, ref, f):
         print(f"watch {ref} {f}")
         yield
         ref._watchers.remove(f)
+    return f
 
 @dataclass
 class Sequence:
