@@ -5,6 +5,12 @@ class Component:
     def __init__(self, *a, **kw):
         self.set_props(*a, **kw)
     def set_props(self, *a, **kw):
+        """Set props based on values given to constructor.
+
+        You may override this method and set self.props as you require. Default
+        implementation assigns props based on the signature of a static method
+        _define_props.
+        """
         # self.__class__._define_props(*a, **kw)
         # TODO empty kw to _define_props don't show up
         self.props = signature(self.__class__._define_props).bind(*a, **kw).arguments
@@ -27,6 +33,15 @@ class Debug(Component):
         print(f"   undo {id(self)} props={self.props}")
 
 class DelegatedComponent(Component):
+    """Base class to manage another Component dynamically.
+
+    To use, subclass this and define get_children to return a Component.
+    Whenever your class is refreshed, get_children will be called and the
+    resulting Component compared with the previous one. If it's of the same
+    type, the new props will be copied into the old instance and the old
+    instance refreshed. If not, the old one will be undone and the new one done
+    in its place.
+    """
     def do(self):
         self._slots = []
         self._slot_i = None
@@ -49,6 +64,14 @@ class DelegatedComponent(Component):
         for h in reversed(self._slots):
             h.undo()
     def use(self, c, *a, **kw):
+        """Activate a Component and use its called-back value.
+
+        Let c be an instance of a Component with a 'then' prop, which is a
+        function called by c after it is activated. (Think of this like c
+        creating a resource then passing it to its 'then' callback.) Calling
+        self.use(c, ...) within get_children() will activate or refresh c as
+        necessary and return the value it passes to its 'then' prop.
+        """
         # There's so much *a, **kw stuff in the hooks parts because we are
         # trying to ergonomically override an callable's argument. We could have
         # `props={.} then=.` but that would be less neat.
@@ -71,36 +94,6 @@ class DelegatedComponent(Component):
             self._slot_i += 1
             return value
 
-class Sequence(Component):
-    def _define_props(components):
-        pass
-    def do(self):
-        self._last = self.props['components'][:]
-        for c in self.props['components']: c.do()
-    def refresh(self):
-        unmounting = False
-        for (old, new), i in enumerate(zip(self._last, self.props['components'])):
-            if not isinstance(new, type(old)):
-                # -1 so i is the index of the last of same type.
-                i -= 1
-                break
-            old.props = new.props
-            old.refresh()
-        for c in reversed(self._last[i+1:]):
-            c.undo()
-        for c in self.props['components'][i+1:]:
-            c.parent = self
-            c.do()
-        self._last = self.props['components'][:]
-    def undo(self):
-        for c in self.props['components']: c.undo()
-
-class Defer(DelegatedComponent):
-    def _define_props(f):
-        pass
-    def get_children(self):
-        return self.props['f']()
-
 class _WithBase(DelegatedComponent):
     def _define_props(*a, then, **kw):
         pass
@@ -114,6 +107,14 @@ class _WithBase(DelegatedComponent):
 
 @cache
 def With(cls):
+    """Do a child tree of components with the result of a Component's callback.
+
+    Let C be a Component with a 'then' prop, which is a function called by C
+    after it is activated. (Think of this like C creating a resource then
+    passing it to its 'then' callback.) With(C) is a Component which accepts the
+    same props as C, except for its 'then', which is passed the same value(s) as
+    C's but which returns a Component that is activated along with With(C).
+    """
     return type(f"With({cls.__name__})", (_WithBase,), {'_hook': cls})
 
 class Memo(Component):
@@ -143,17 +144,7 @@ class Context(Component):
     def get_value(self):
         return _find_provider(self.props['key'], self.parent)
 
-class Ref:
-    def __init__(self, value, element):
-        self._value = value
-        self._element = element
-    def __call__(self):
-        return self._value
-    def set(self, x):
-        self._value = x
-        self._element.refresh()
-
-# TODO No, each f needs to be different class.
+# TODO No, each f needs to be different class, like With.
 class FunctionComponent(DelegatedComponent):
     _current = None
     def __init__(self, f, *a, **kw):
