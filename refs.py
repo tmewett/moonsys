@@ -85,7 +85,6 @@ class Computed(ReadableReactive):
             self._expired = False
         else:
             self._expired = True
-        self.wire = self
         self.active = as_ref(active)
         for ref in deps:
             ref.watch(self.active)(self.touch)
@@ -107,9 +106,6 @@ class WriteableComputed(Computed, Reactive):
         return f
     def setter(self, value):
         self._on_set(value)
-
-class Effect:
-    pass
 
 def effect(active):
     def wrap(gen):
@@ -139,35 +135,3 @@ def _watch_ref(active, ref, f):
         yield
         ref._watchers.remove(f)
     return f
-
-@dataclass
-class Sequence:
-    # ctx: dict
-    effects: list
-    def do(self):
-        for e in self.effects: e.do()
-    def undo(self):
-        for e in self.effects: e.undo()
-
-@dataclass
-class Nothing:
-    def do(self):
-        pass
-    def undo(self):
-        pass
-
-@dataclass
-class _EffectRef:
-    ref: Ref
-    def _redo(self):
-        self.undo()
-        self.do()
-    def do(self):
-        self._effect = self.ref()
-        self._effect.do()
-    def undo(self):
-        self._effect.undo()
-
-def EffectRef(ref):
-    er = _EffectRef(ref)
-    return Sequence([er, ref.Watch(er._redo)])
