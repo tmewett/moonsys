@@ -33,10 +33,6 @@ class ReadableReactive:
         return self.getter()
 
 class Reactive(ReadableReactive):
-    def set(self, x):
-        self.setter(x, self.touch)
-    def quiet_set(self, x):
-        self.setter(x, lambda: None)
     def map(self, f):
         self.set(f(self()))
 
@@ -51,9 +47,8 @@ class Ref(Reactive):
         super().__init__()
     def getter(self):
         return self._value
-    def setter(self, x, touch):
+    def set(self, x):
         self._value = x
-        touch()
 
 class read_only(ReadableReactive):
     def __init__(self, ref):
@@ -110,9 +105,8 @@ class WriteableComputed(Computed, Reactive):
     def on_set(self, f):
         self._on_set = f
         return f
-    def setter(self, value, touch):
+    def setter(self, value):
         self._on_set(value)
-        touch()
 
 class Effect:
     pass
