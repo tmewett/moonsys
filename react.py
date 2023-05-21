@@ -14,22 +14,29 @@ class Component:
         # self.__class__._define_props(*a, **kw)
         # TODO empty kw to _define_props don't show up
         self.props = signature(self.__class__._define_props).bind(*a, **kw).arguments
-    def do(self):
+    def on_activate(self):
         pass
+    def on_refresh(self):
+        self.deactivate()
+        self.activate()
+    def on_deactivate(self):
+        pass
+    # TODO manage transitions
+    def activate(self):
+        self.on_activate()
+    def deactivate(self):
+        self.on_deactivate()
     def refresh(self):
-        self.undo()
-        self.do()
-    def undo(self):
-        pass
+        self.on_refresh()
 
 class Debug(Component):
     def set_props(self, **props):
         self.props = props
-    def do(self):
+    def on_activate(self):
         print(f"     do {id(self)} props={self.props}")
-    def refresh(self):
+    def on_refresh(self):
         print(f"refresh {id(self)} props={self.props}")
-    def undo(self):
+    def on_deactivate(self):
         print(f"   undo {id(self)} props={self.props}")
 
 class DelegatedComponent(Component):
@@ -42,27 +49,27 @@ class DelegatedComponent(Component):
     instance refreshed. If not, the old one will be undone and the new one done
     in its place.
     """
-    def do(self):
+    def on_activate(self):
         self._slots = []
         self._slot_i = None
         self._delegate = self.get_children()
         self._delegate.parent = self
-        self._delegate.do()
-    def refresh(self):
+        self._delegate.activate()
+    def on_refresh(self):
         self._slot_i = 0
         new = self.get_children()
         if isinstance(new, type(self._delegate)):
             self._delegate.props = new.props
             self._delegate.refresh()
         else:
-            self._delegate.undo()
+            self._delegate.deactivate()
             self._delegate = new
             self._delegate.parent = self
-            self._delegate.do()
-    def undo(self):
-        self._delegate.undo()
+            self._delegate.activate()
+    def on_deactivate(self):
+        self._delegate.deactivate()
         for h in reversed(self._slots):
-            h.undo()
+            h.deactivate()
     def use(self, c, *a, **kw):
         """Activate a Component and use its called-back value.
 
@@ -83,7 +90,7 @@ class DelegatedComponent(Component):
             value = x
         if self._slot_i is None:
             self._slots.append(c(*a, then=set_value, **kw))
-            self._slots[-1].do()
+            self._slots[-1].activate()
             return value
         else:
             old = self._slots[self._slot_i]
@@ -120,7 +127,7 @@ def With(cls):
 class Memo(Component):
     def _define_props(f, deps=None, *, then):
         pass
-    def do(self):
+    def on_activate(self):
         if not hasattr(self, '_last_deps') or (self.props['deps'] is not None and self._last_deps != self.props['deps']):
             self._last_deps = self.props['deps']
             self._value = self.props['f']()
@@ -169,9 +176,9 @@ def func(n):
     return With(Memo)(lambda: n*2, [n], then=lambda nn: Debug(n=nn))
 
 f = func(n=1)
-f.do()
+f.activate()
 f.props['n'] = 1
 f.refresh()
 f.props['n'] = 2
 f.refresh()
-f.undo()
+f.deactivate()
