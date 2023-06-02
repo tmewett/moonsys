@@ -174,7 +174,8 @@ def define_window(setup):
     # Load empty handler frame for on_event.
     window._event_stack = [{}]
     v_FrameCount = Ref(0)
-    # TODO default FrameTime to wall time
+    start_time = time()
+    v_FrameTime = Ref(0.0)
     v_MousePosition = Ref(None)
     v_MousePositionChange = Ref(Vec2(0, 0))
     v_ScrollChange = Ref(Vec2(0, 0))
@@ -185,6 +186,7 @@ def define_window(setup):
     ctx = {
         type(window): window,
         FrameCount: v_FrameCount,
+        FrameTime: v_FrameTime,
         MousePosition: v_MousePosition,
         MousePositionChange: v_MousePositionChange,
         ScrollChange: v_ScrollChange,
@@ -197,6 +199,7 @@ def define_window(setup):
     @window.event
     def on_draw():
         v_FrameCount.set(v_FrameCount() + 1)
+        v_FrameTime.set(time() - start_time)
         for f in v_Draws.get(): f()
     @window.event
     def on_mouse_motion(x, y, dx, dy):
