@@ -32,16 +32,18 @@ def tick():
             try:
                 topo_i = topo_sort.index(r)
             except ValueError:
+                # No? Continue down tree, depth-first.
                 current_sort.append(r)
                 stack += r.links
             else:
-                # Move the insertion point back to before that reactive, then
-                # skip processing it in the current sort since it's already been
+                # Yes? Move the insertion point back to before that reactive.
+                # Skip processing it in the current sort since it's already been
                 # done.
                 insert_point = min(topo_i, insert_point)
         topo_sort[insert_point:insert_point] = current_sort
+    # Clear the update set before running any external code, so any changes are
+    # correctly remembered for next tick.
     _to_update.clear()
-    print(topo_sort)
     for r in topo_sort:
         r.update()
     for r in topo_sort:
@@ -51,34 +53,29 @@ def tick():
     for r in to_reset:
         r.set(None)
 
-def set_origin(obj):
-    import inspect
-    frame = inspect.currentframe()
-
 class UNINITIALIZED:
     pass
 
 class ReadableReactive:
-    # To get commit phases on .set ... remove watching public API, replace with
-    # downstreams rdeps set; on .set, collect .touches from all downstreams;
-    # only call on global refresh. Can get commit phases for outputs too, by saving into a next_value var.
-    def __init__(self, *, is_event):
+    def __init__(self, initial_value, *, is_event):
         self._watchers = set()
         self.links = set()
-        # prev lets you read the pre-tick value of a ref, essentially breaking the dependency chain.
-        self._value = self._next_value = UNINITIALIZED()
+        # We require an initial value because otherwise we'd need a safe
+        # .get(default) for uninitialised reactives, and in Python you can't
+        # pick default values in type-generic cases. In a language with
+        # type-infering `zero` or other default value functions, this may be
+        # possible.
+        self._value = self._next_value = initial_value
         self.is_event = is_event
         self.log = None
         _to_update.add(self)
-        self.set_origin()
     def set_origin(self):
         import inspect
         frame = inspect.currentframe()
         tb = inspect.getframeinfo(frame.f_back.f_back)
         self._origin = f"{tb.function}:{tb.lineno}"
     def __repr__(self):
-        return f"<{self.__class__.__name__}({self._value}) from {self._origin}>"
-    # TODO .set
+        return f"<{self.__class__.__name__}({self._value})>"
     def __call__(self):
         if _current_tracker is not None: _current_tracker.add(self)
         return self._value
@@ -110,11 +107,10 @@ def as_ref(x):
     return Ref(x)
 
 class Ref(Reactive):
-    def __init__(self, value=UNINITIALIZED(), is_event=False):
-        super().__init__(is_event=is_event)
+    def __init__(self, value, is_event=False):
+        super().__init__(value, is_event=is_event)
         self._value = value
         self._driver = None
-        self.set_origin()
     def update(self):
         if self._driver:
             self._next_value = self._driver._next_value
@@ -133,10 +129,9 @@ ref = Ref
 
 class read_only(ReadableReactive):
     def __init__(self, ref):
-        super().__init__(is_event=ref.is_event)
+        super().__init__(ref(), is_event=ref.is_event)
         self._ref = ref
         ref.links.add(self)
-        self.set_origin()
     def update(self):
         self._next_value = self._ref._next_value
 
@@ -152,12 +147,11 @@ def writeable_computed(*args):
 
 class Computed(ReadableReactive):
     def __init__(self, function, deps):
-        super().__init__(is_event=False)
         self._function = function
         self._deps = deps
         for ref in deps:
             ref.links.add(self)
-        self.set_origin()
+        super().__init__(self._function(*[r._next_value for r in self._deps]), is_event=False)
     def update(self):
         self._next_value = self._function(*[r._next_value for r in self._deps])
 
