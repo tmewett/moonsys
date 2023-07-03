@@ -1,19 +1,3 @@
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from typing import Callable
-
-_current_tracker = None
-
-@contextmanager
-def _track_into(t):
-    global _current_tracker
-    old = _current_tracker
-    try:
-        _current_tracker = t
-        yield
-    finally:
-        _current_tracker = old
-
 _to_update = set()
 
 def tick():
@@ -53,12 +37,8 @@ def tick():
     for r in to_reset:
         r.set(None)
 
-class UNINITIALIZED:
-    pass
-
 class ReadableReactive:
     def __init__(self, initial_value, *, is_event):
-        self._watchers = set()
         self.links = set()
         # We require an initial value because otherwise we'd need a safe
         # .get(default) for uninitialised reactives, and in Python you can't
@@ -77,29 +57,12 @@ class ReadableReactive:
     def __repr__(self):
         return f"<{self.__class__.__name__}({self._value})>"
     def __call__(self):
-        if _current_tracker is not None: _current_tracker.add(self)
         return self._value
-    def get(self, default):
-        return default if isinstance(self._value, UNINITIALIZED) else self._value
-    def watch(self, active=None):
-        if active is None:
-            return lambda f: self._watch(f)
-        return lambda f: _watch_ref(active, self, f)
-    def _watch(self, f):
-        print(f"watch {self} {f}")
-        self._watchers.add(f)
-        return f
-    def touch(self):
-        for w in self._watchers: w()
-    def quiet_get(self):
-        return self.getter()
 
 class Reactive(ReadableReactive):
     def set(self, x):
         self.setter(x)
         _to_update.add(self)
-    def map(self, f):
-        self.set(f(self()))
 
 def as_ref(x):
     if isinstance(x, ReadableReactive):
@@ -109,7 +72,6 @@ def as_ref(x):
 class Ref(Reactive):
     def __init__(self, value, is_event=False):
         super().__init__(value, is_event=is_event)
-        self._value = value
         self._driver = None
     def update(self):
         if self._driver:
@@ -145,6 +107,7 @@ def writeable_computed(*args):
         return WriteableComputed(f, *args)
     return builder
 
+# we could still do auto-detecting dependencies, we'd just have to swap out () to next value during execution. it that safe?
 class Computed(ReadableReactive):
     def __init__(self, function, deps):
         self._function = function
@@ -181,12 +144,3 @@ def effect(active):
                 last = False
         update()
     return wrap
-
-def _watch_ref(active, ref, f):
-    @effect(active)
-    def _():
-        ref._watchers.add(f)
-        print(f"watch {ref} {f}")
-        yield
-        ref._watchers.remove(f)
-    return f
