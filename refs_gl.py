@@ -8,16 +8,9 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, DataRef, Ref, read_only, writeable_computed, effect
+from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, gate, reduce_event, sample, flag
 
-def watch_true(on, r):
-    def bind(f):
-        @r.watch(on)
-        def handler():
-            if r(): f()
-    return bind
-
-def clear(*, color, depth):
+def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
     glClearColor(*color)
     glClearDepth(depth)
@@ -47,51 +40,42 @@ def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
 
 class drag_zoom_view:
     def __init__(self, active, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
-        self.center = as_ref(center)
-        s_target = as_ref(math.log(zoom, scroll_factor))
-        s = tween(ctx, s_target)
-        self.anchor = self.center()
-        self.s_0 = Vec2(0.0, 0.0)
-        self.zoom = computed()(lambda: scroll_factor ** s())
-        self.center = computed()(lambda: self.anchor + self.s_0 * 1 / self.zoom())
-        @ctx[MousePositionChange].watch(active)
-        def on_mouse():
-            if not ctx[LeftMouse](): return
-            self.anchor = self.center() - ctx[MousePositionChange]() / self.zoom()
-            self.s_0 = Vec2(0.0, 0.0)
-            s.set(s())
-        @ctx[ScrollChange].watch(active)
-        def on_scroll():
-            amount = ctx[ScrollChange]().y
-            m = (ctx[MousePosition]() - ctx[Region].size / 2)
-            self.anchor = self.center() + m / self.zoom()
-            self.s_0 = -m
-            s_target.map(lambda x: x + amount)
+        g_ScrollChange = gate(active, ctx[ScrollChange])
+        g_ScrollChange.log = 'sc'
+        g_MousePosition = gate(active, ctx[MousePosition])
+        s = reduce_event(lambda s, sc: s + sc.y, g_ScrollChange, 0.0)
+        s.log = 's'
+        self.zoom = computed([s])(lambda s: scroll_factor ** s)
+        self.center = Ref(center)
+        mouse_world = computed([g_MousePosition, ctx[Region].size, self.zoom, self.center])(
+            lambda m, s, z, c: c + (m - s/2) / z if m is not None else Vec2(0, 0)
+        )
+        target = sample(mouse_world, g_ScrollChange)
+        s0 = computed([target])(lambda t: (self.center() - t) * self.zoom())
+        self.center << computed([target, s0, self.zoom])(lambda t, s0, z: t + s0 / z)
 
 def draw_shader_image(active, ctx, fragment_src, *, uniforms):
     _program = pyglet.graphics.shader.ShaderProgram(
         pyglet.graphics.shader.Shader("#version 330\nin vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }", 'vertex'),
         pyglet.graphics.shader.Shader(fragment_src, 'fragment'),
     )
-    uniform_refs = {
-        name: as_ref(value) for name, value in uniforms.items()
-        if name in _program.uniforms
-    }
-    _new_uniforms = {}
-    def set_uniform(name, ref):
-        _new_uniforms[name] = ref()
-        # print(f"set uniform {name!r} to {ref()}")
-    for name, ref in uniform_refs.items():
-        _program[name] = ref()
-        ref.watch(active)(partial(set_uniform, name, ref))
+    uniform_refs = []
+    for name, value in uniforms.items():
+        if name not in _program.uniforms: continue
+        if isinstance(value, ReadableReactive):
+            uniform_refs.append((name, value, flag(value)))
+            _program[name] = value()
+        else:
+            print(name, value)
+            _program[name] = value
     _vlist = _program.vertex_list_indexed(4, pyglet.gl.GL_TRIANGLES,
         (0, 1, 2, 0, 2, 3),
         pos=('f', (-1.0,1.0, -1.0,-1.0, 1.0,-1.0, 1.0,1.0)))
     def draw():
         _program.use()
-        for name, value in _new_uniforms.items():
-            _program[name] = value
-        _new_uniforms.clear()
+        for name, value, flag in uniform_refs:
+            if flag.pop():
+                _program[name] = value()
         _vlist.draw(pyglet.gl.GL_TRIANGLES)
     ctx[Draws].add(active, draw)
 
@@ -173,16 +157,17 @@ def define_window(setup):
     window = pyglet.window.Window()
     # Load empty handler frame for on_event.
     window._event_stack = [{}]
+    frames = 0
     v_FrameCount = Ref(0)
     start_time = time()
     v_FrameTime = Ref(0.0)
     v_MousePosition = Ref(None)
     v_MousePositionChange = Ref(Vec2(0, 0))
-    v_ScrollChange = Ref(Vec2(0, 0))
+    v_ScrollChange = Ref(Vec2(0, 0), is_event=True)
     v_LeftMouse = Ref(False)
     v_KeyMap = defaultdict(lambda: Ref(False))
     v_Draws = gatherer()
-    v_Region = Region(Vec2(window.width, window.height))
+    v_Region = Region(Ref(Vec2(window.width, window.height)))
     ctx = {
         type(window): window,
         FrameCount: v_FrameCount,
@@ -198,32 +183,42 @@ def define_window(setup):
     active = Ref(True)
     @window.event
     def on_draw():
-        v_FrameCount.set(v_FrameCount() + 1)
+        nonlocal frames
+        v_FrameCount.set(frames)
+        frames += 1
         v_FrameTime.set(time() - start_time)
+        tick()
         for f in v_Draws.get(): f()
     @window.event
     def on_mouse_motion(x, y, dx, dy):
         v_MousePosition.set(Vec2(x, y))
         v_MousePositionChange.set(Vec2(dx, dy))
+        tick()
     @window.event
     def on_mouse_drag(x, y, dx, dy, *_):
         v_MousePosition.set(Vec2(x, y))
         v_MousePositionChange.set(Vec2(dx, dy))
+        tick()
     @window.event
     def on_mouse_scroll(x, y, sx, sy):
         v_ScrollChange.set(Vec2(sx, sy))
+        tick()
     @window.event
     def on_mouse_press(x, y, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
             v_LeftMouse.set(True)
+            tick()
     @window.event
     def on_mouse_release(x, y, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
             v_LeftMouse.set(False)
+            tick()
     @window.event
     def on_key_press(symbol, modifiers):
         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(True)
+        tick()
     @window.event
     def on_key_release(symbol, modifiers):
         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
+        tick()
     setup(read_only(active), ctx)

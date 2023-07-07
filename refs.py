@@ -4,7 +4,7 @@ def tick():
     to_reset = set()
     topo_sort = []
     for seed in _to_update:
-        if seed.is_event:
+        if seed.is_event and isinstance(seed, Ref):
             to_reset.add(seed)
         stack = [seed]
         current_sort = []
@@ -30,6 +30,7 @@ def tick():
     _to_update.clear()
     for r in topo_sort:
         r.update()
+        for f in r._flags: f._value = True
     for r in topo_sort:
         if r.log:
             print(f"{r.log}: {r._value} <- {r._next_value}")
@@ -40,6 +41,7 @@ def tick():
 class ReadableReactive:
     def __init__(self, initial_value, *, is_event):
         self.links = set()
+        self._flags = set()
         # We require an initial value because otherwise we'd need a safe
         # .get(default) for uninitialised reactives, and in Python you can't
         # pick default values in type-generic cases. In a language with
@@ -117,6 +119,56 @@ class Computed(ReadableReactive):
         super().__init__(self._function(*[r._next_value for r in self._deps]), is_event=False)
     def update(self):
         self._next_value = self._function(*[r._next_value for r in self._deps])
+
+class gate(ReadableReactive):
+    def __init__(self, open, reactive):
+        self._open = open
+        self._open.links.add(self)
+        self._reactive = reactive
+        if self._open():
+            self._reactive.links.add(self)
+        super().__init__(reactive() if open() else None, is_event=reactive.is_event)
+    def update(self):
+        if self._open():
+            self._reactive.links.add(self)
+            self._next_value = self._reactive._next_value
+        else:
+            self._reactive.links.remove(self)
+
+class flag:
+    def __init__(self, reactive):
+        reactive._flags.add(self)
+        self._value = False
+    def pop(self):
+        value = self._value
+        self._value = False
+        return value
+
+class sample(ReadableReactive):
+    def __init__(self, reactive, event):
+        self._reactive = reactive
+        self._event = event
+        self._event.links.add(self)
+        super().__init__(self._reactive(), is_event=False)
+    def update(self):
+        self._next_value = self._reactive()
+
+class process_event(ReadableReactive):
+    def __init__(self, f, event, state):
+        self._f = f
+        self._event = event
+        self._event.links.add(self)
+        self._state = state
+        super().__init__(self._state, is_event=False)
+    def update(self):
+        if self._event._next_value is not None:
+            self._state, self._next_value = self._f(self._state, self._event._next_value)
+
+def reduce_event(f, event, init):
+    def reduce(a, e):
+        x = f(a, e)
+        return x, x
+    return process_event(reduce, event, init)
 
 class WriteableComputed(Computed, Reactive):
     def on_set(self, f):
