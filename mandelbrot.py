@@ -11,6 +11,7 @@ def setup(on, ctx):
     time = refs_gl.video_time(ctx, fps=60)
     ctx = ctx | {refs_gl.FrameTime: time}
     fractal_time = refs_gl.time_control(on, ctx)
+    # fractal_time.log = 'fract'
     view = refs_gl.drag_zoom_view(on, ctx)
     refs_gl.draw_shader_image(on, ctx,
         Path("shaders/mandelbrot.glsl").read_text(),
@@ -18,6 +19,7 @@ def setup(on, ctx):
             'resolution': ctx[refs_gl.Region].size,
             'offset': view.center,
             'zoom': view.zoom,
+            # 'time': ctx[refs_gl.FrameTime],
             'time': fractal_time,
         },
     )

@@ -1,11 +1,9 @@
 _to_update = set()
+_to_reset = set()
 
 def tick():
-    to_reset = set()
     topo_sort = []
     for seed in _to_update:
-        if seed.is_event and isinstance(seed, Ref):
-            to_reset.add(seed)
         stack = [seed]
         current_sort = []
         # Where the inner sort will be inserted into the outer sort; the minimum index of all reactives
@@ -35,8 +33,9 @@ def tick():
         if r.log:
             print(f"{r.log}: {r._value} <- {r._next_value}")
         r._value = r._next_value
-    for r in to_reset:
+    for r in _to_reset:
         r.set(None)
+    _to_reset.clear()
 
 class ReadableReactive:
     def __init__(self, initial_value, *, is_event):
@@ -80,6 +79,8 @@ class Ref(Reactive):
             self._next_value = self._driver._next_value
     def setter(self, x):
         self._next_value = x
+        if self.is_event and x is not None:
+            _to_reset.add(self)
     def __lshift__(self, r):
         # We can have circularity in reference to reactives even without circularity in deps (pull sampling).
         if self.is_event != r.is_event:
@@ -169,6 +170,30 @@ def reduce_event(f, event, init):
         x = f(a, e)
         return x, x
     return process_event(reduce, event, init)
+
+class process_sample_unsafe(ReadableReactive):
+    def __init__(self, reduce, time, state):
+        self._reduce = reduce
+        self._time = time
+        self._time.links.add(self)
+        self._state = state
+        super().__init__(self._state, is_event=False)
+    def update(self):
+        self._state, self._next_value = self._reduce(self._state, self._time._next_value - self._time())
+
+def reduce_sample_unsafe(f, time, init):
+    def reduce(a, e):
+        x = f(a, e)
+        return x, x
+    return process_sample_unsafe(reduce, time, init)
+
+def integrate(r, time, offset=0.0):
+    def f(total, dt):
+        # The new total integral is the previous one plus the last value of r
+        # over the duration.
+        new_total = total + r() * dt
+        return new_total
+    return reduce_sample_unsafe(f, time, offset)
 
 class WriteableComputed(Computed, Reactive):
     def on_set(self, f):

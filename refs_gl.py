@@ -8,7 +8,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, gate, reduce_event, sample, flag
+from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, gate, reduce_event, sample, integrate, flag
 
 def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -16,35 +16,11 @@ def clear(*, color=(0, 0, 0, 255), depth=0):
     glClearDepth(depth)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-def tween(ctx, target, duration=0.1, curve=lambda t: t**0.7):
-    start = target()
-    start_time = 0.0
-    # Only depend on frame time - the target change watcher needs to run
-    # first. (But I tried without and it worked?)
-    @writeable_computed({ctx[FrameTime]})
-    def tweened():
-        t = ctx[FrameTime]() - start_time
-        return start + (target() - start)*curve(min(t / duration, 1.0))
-    @tweened.on_set
-    def force(value):
-        nonlocal start
-        start = value
-        target.set(value)
-    @target.watch(tweened.active)
-    def change():
-        nonlocal start, start_time
-        start = tweened()
-        start_time = ctx[FrameTime]()
-    change()
-    return tweened
-
 class drag_zoom_view:
     def __init__(self, active, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
         g_ScrollChange = gate(active, ctx[ScrollChange])
-        g_ScrollChange.log = 'sc'
         g_MousePosition = gate(active, ctx[MousePosition])
         s = reduce_event(lambda s, sc: s + sc.y, g_ScrollChange, 0.0)
-        s.log = 's'
         self.zoom = computed([s])(lambda s: scroll_factor ** s)
         self.center = Ref(center)
         mouse_world = computed([g_MousePosition, ctx[Region].size, self.zoom, self.center])(
@@ -80,34 +56,22 @@ def draw_shader_image(active, ctx, fragment_src, *, uniforms):
     ctx[Draws].add(active, draw)
 
 def video_time(ctx, *, fps):
-    return computed()(lambda: ctx[FrameCount]() / fps)
+    return computed([ctx[FrameCount]])(lambda fc: fc / fps)
 
 def warped_time(time, *, speed):
-    base_source = base = 0.0
-    speed = as_ref(speed)
-    controlled = computed({time})(lambda: base + (time() - base_source) * speed())
-    @speed.watch()
-    def rebase():
-        nonlocal base, base_source
-        base = controlled()
-        base_source = time()
-    rebase()
-    return controlled
+    return integrate(speed, time)
 
 def time_control(on, ctx):
-    speed = Ref(1.0)
-    @ctx[KeyMap]['SPACE'].watch(on)
-    def playpause():
-        if ctx[KeyMap]['SPACE']():
-            speed.set(0.0 if speed() != 0.0 else 1.0)
-    @ctx[KeyMap]['LEFT'].watch(on)
-    def rev():
-        if ctx[KeyMap]['LEFT']():
-            speed.set(-3.0)
-    @ctx[KeyMap]['RIGHT'].watch(on)
-    def ff():
-        if ctx[KeyMap]['RIGHT']():
-            speed.set(3.0)
+    def r(prev, k):
+        if k == 'SPACE':
+            return 0.0 if prev != 0.0 else 1.0
+        elif k == 'LEFT':
+            return prev - 3.0 if prev < 0.0 else -3.0
+        elif k == 'RIGHT':
+            return prev + 3.0 if prev > 0.0 else 3.0
+        else:
+            return prev
+    speed = reduce_event(r, ctx[KeyPress], 1.0)
     return warped_time(ctx[FrameTime], speed=speed)
 
 _handler_sets = {}
@@ -148,6 +112,7 @@ class MousePositionChange: pass
 class ScrollChange: pass
 class LeftMouse: pass
 class KeyMap: pass
+class KeyPress: pass
 class Draws: pass
 class Region:
     def __init__(self, size):
@@ -166,6 +131,7 @@ def define_window(setup):
     v_ScrollChange = Ref(Vec2(0, 0), is_event=True)
     v_LeftMouse = Ref(False)
     v_KeyMap = defaultdict(lambda: Ref(False))
+    v_KeyPress = Ref(None, is_event=True)
     v_Draws = gatherer()
     v_Region = Region(Ref(Vec2(window.width, window.height)))
     ctx = {
@@ -177,6 +143,7 @@ def define_window(setup):
         ScrollChange: v_ScrollChange,
         LeftMouse: v_LeftMouse,
         KeyMap: v_KeyMap,
+        KeyPress: v_KeyPress,
         Draws: v_Draws,
         Region: v_Region,
     }
@@ -215,7 +182,9 @@ def define_window(setup):
             tick()
     @window.event
     def on_key_press(symbol, modifiers):
-        v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(True)
+        str_symbol = pyglet.window.key.symbol_string(symbol)
+        v_KeyMap[str_symbol].set(True)
+        v_KeyPress.set(str_symbol)
         tick()
     @window.event
     def on_key_release(symbol, modifiers):
