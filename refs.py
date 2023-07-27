@@ -2,6 +2,7 @@ _to_update = set()
 _to_reset = set()
 
 def tick():
+    """Update all reactives based on changes to refs."""
     topo_sort = []
     for seed in _to_update:
         stack = [seed]
@@ -38,6 +39,20 @@ def tick():
     _to_reset.clear()
 
 class ReadableReactive:
+    """Base class for a reactive value.
+
+    Reactives cover both continuous values and event streams; they are
+    distinguished with the `is_event` boolean.
+
+    To create a custom reactive, subclass this and:
+
+    -   call its __init__ at the end of your own initialiser
+    -   override update() to set self._next_value to the new value
+
+    To make a reactive B depend on another one A, do `A.links.add(B)`. Note that
+    to use A's new value, B needs to refer to A._next_value in its update
+    method, not A().
+    """
     def __init__(self, initial_value, *, is_event):
         self.links = set()
         self._flags = set()
@@ -66,11 +81,13 @@ class Reactive(ReadableReactive):
         _to_update.add(self)
 
 def as_ref(x):
+    """Turns a value into a reactive, if it isn't already."""
     if isinstance(x, ReadableReactive):
         return x
     return Ref(x)
 
 class Ref(Reactive):
+    """Settable input reactive."""
     def __init__(self, value, is_event=False):
         super().__init__(value, is_event=is_event)
         self._driver = None
@@ -101,6 +118,7 @@ class read_only(ReadableReactive):
         self._next_value = self._ref._next_value
 
 def computed(*args):
+    """Reactive function."""
     def builder(f):
         return Computed(f, *args)
     return builder
