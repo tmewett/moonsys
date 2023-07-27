@@ -105,11 +105,6 @@ def computed(*args):
         return Computed(f, *args)
     return builder
 
-def writeable_computed(*args):
-    def builder(f):
-        return WriteableComputed(f, *args)
-    return builder
-
 # we could still do auto-detecting dependencies, we'd just have to swap out () to next value during execution. it that safe?
 class Computed(ReadableReactive):
     def __init__(self, function, deps):
@@ -194,13 +189,6 @@ def integrate(r, time, offset=0.0):
         new_total = total + r() * dt
         return new_total
     return reduce_sample_unsafe(f, time, offset)
-
-class WriteableComputed(Computed, Reactive):
-    def on_set(self, f):
-        self._on_set = f
-        return f
-    def setter(self, value):
-        self._on_set(value)
 
 def effect(active):
     def wrap(gen):
