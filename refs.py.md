@@ -13,9 +13,9 @@ Call `.set(new_value)` to change it. Changes only propagate after calling `tick`
     x = Ref(2)
     print(x())  # 2
     x.set(3)
-    print(x)  # 2
+    print(x())  # 2
     tick()
-    print(x)  # 3
+    print(x())  # 3
 
 A Ref can be "driven" by another reactive: `ref << reactive` causes `ref` to mirror `reactive`'s value. This can be used to basically "declare" a Ref early: you create one with a default value, do things with it, then set its actual value. You can create certain kinds of cycles e.g. with `integrate`.
 
