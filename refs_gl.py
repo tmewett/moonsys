@@ -1,7 +1,9 @@
 import math
 from dataclasses import dataclass, field
+from datetime import datetime
 from collections import defaultdict
 from functools import partial
+from pathlib import Path
 from time import time
 
 import pyglet
@@ -54,6 +56,20 @@ def draw_shader_image(active, ctx, fragment_src, *, uniforms):
                 _program[name] = value()
         _vlist.draw(pyglet.gl.GL_TRIANGLES)
     ctx[Draws].add(active, draw)
+
+def record(on, ctx):
+    take = datetime.now().strftime("refs_gl_%Y-%m-%d_%H-%M-%S")
+    dir = Path(take)
+    dir.mkdir()
+    bm = pyglet.image.get_buffer_manager()
+    color = bm.get_color_buffer()
+    frames = 0
+    def draw():
+        nonlocal frames
+        file = dir / f"{frames:06}.png"
+        color.save(file)
+        frames += 1
+    ctx[Draws].add(on, draw)
 
 def video_time(ctx, *, fps):
     return computed([ctx[FrameCount]])(lambda fc: fc / fps)

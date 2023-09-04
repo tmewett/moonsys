@@ -23,6 +23,7 @@ def setup(on, ctx):
             'time': fractal_time,
         },
     )
+    refs_gl.record(on, ctx)
 
 refs_gl.define_window(setup)
 pyglet.app.run()
