@@ -10,7 +10,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, gate, reduce_event, sample, integrate, flag
+from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, gate, reduce_event, sample, integrate, flag, reduce_sample_unsafe
 
 def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -22,17 +22,25 @@ class drag_zoom_view:
     def __init__(self, active, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
         g_ScrollChange = gate(active, ctx[ScrollChange])
         g_MousePosition = gate(active, ctx[MousePosition])
-        s = reduce_event(lambda s, sc: s + sc.y, g_ScrollChange, 0.0)
+        g_MouseDrag = gate(active, ctx[MouseDrag])
+        s = reduce_event(lambda s, sc: s + sc.y, g_ScrollChange, 0)
         self.zoom = computed([s])(lambda s: scroll_factor ** s)
-        self.center = Ref(center)
-        mouse_world = computed([g_MousePosition, ctx[Region].size, self.zoom, self.center])(
-            lambda m, s, z, c: c + (m - s/2) / z if m is not None else Vec2(0, 0)
-        )
+        # zoom_center is screen centre in world space ignoring all dragging.
+        zoom_center = Ref(center)
+        @computed([g_MousePosition, ctx[Region].size, self.zoom, zoom_center])
+        def mouse_world(m, s, z, c):
+            if m is None: return Vec2(0, 0)
+            return c + (m - s/2) / z
         target = sample(mouse_world, g_ScrollChange)
-        s0 = computed([target])(lambda t: (self.center() - t) * self.zoom())
-        self.center << computed([target, s0, self.zoom])(lambda t, s0, z: t + s0 / z)
+        # s0 is the centre position if we zoomed out from target to 1x. It
+        # changes only when target does.
+        s0 = computed([target])(lambda t: (zoom_center() - t) * self.zoom())
+        zoom_center << computed([target, s0, self.zoom])(lambda t, s0, z: t + s0 / z)
+        drag_pos = reduce_event(lambda xa, x: xa - x / self.zoom(), g_MouseDrag, Vec2(0, 0))
+        drag_pos.log = 'dp'
+        self.center = computed([drag_pos, zoom_center])(lambda d, c: d + c)
 
-def draw_shader_image(active, ctx, fragment_src, *, uniforms):
+def draw_shader_image(active, ctx, fragment_src, *, uniforms={}):
     _program = pyglet.graphics.shader.ShaderProgram(
         pyglet.graphics.shader.Shader("#version 330\nin vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }", 'vertex'),
         pyglet.graphics.shader.Shader(fragment_src, 'fragment'),
@@ -127,6 +135,7 @@ class MousePosition: pass
 class MousePositionChange: pass
 class ScrollChange: pass
 class LeftMouse: pass
+class MouseDrag: pass
 class KeyMap: pass
 class KeyPress: pass
 class Draws: pass
@@ -146,6 +155,8 @@ def define_window(setup):
     v_MousePositionChange = Ref(Vec2(0, 0))
     v_ScrollChange = Ref(Vec2(0, 0), is_event=True)
     v_LeftMouse = Ref(False)
+    v_MouseDrag = Ref(None, is_event=True)
+    # v_MouseDrag.log = 'md'
     v_KeyMap = defaultdict(lambda: Ref(False))
     v_KeyPress = Ref(None, is_event=True)
     v_Draws = gatherer()
@@ -158,6 +169,7 @@ def define_window(setup):
         MousePositionChange: v_MousePositionChange,
         ScrollChange: v_ScrollChange,
         LeftMouse: v_LeftMouse,
+        MouseDrag: v_MouseDrag,
         KeyMap: v_KeyMap,
         KeyPress: v_KeyPress,
         Draws: v_Draws,
@@ -181,6 +193,8 @@ def define_window(setup):
     def on_mouse_drag(x, y, dx, dy, *_):
         v_MousePosition.set(Vec2(x, y))
         v_MousePositionChange.set(Vec2(dx, dy))
+        if v_LeftMouse._next_value:
+            v_MouseDrag.set(Vec2(dx, dy))
         tick()
     @window.event
     def on_mouse_scroll(x, y, sx, sy):

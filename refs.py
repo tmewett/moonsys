@@ -125,14 +125,19 @@ def computed(*args):
 
 # we could still do auto-detecting dependencies, we'd just have to swap out () to next value during execution. it that safe?
 class Computed(ReadableReactive):
-    def __init__(self, function, deps):
+    def __init__(self, function, deps, *, is_event=False, data=None):
         self._function = function
         self._deps = deps
+        self._data = data
         for ref in deps:
             ref.links.add(self)
-        super().__init__(self._function(*[r._next_value for r in self._deps]), is_event=False)
+        super().__init__(self._get_next_value(), is_event=False)
     def update(self):
-        self._next_value = self._function(*[r._next_value for r in self._deps])
+        self._next_value = self._get_next_value()
+    def _get_next_value(self):
+        if self._data is not None:
+            return self._function(*[r._next_value for r in self._deps], self._data)
+        return self._function(*[r._next_value for r in self._deps])
 
 class gate(ReadableReactive):
     def __init__(self, open, reactive):
@@ -200,13 +205,22 @@ def reduce_sample_unsafe(f, time, init):
         return x, x
     return process_sample_unsafe(reduce, time, init)
 
-def integrate(r, time, offset=0.0):
+def integrate(r, time, initial=0.0):
     def f(total, dt):
         # The new total integral is the previous one plus the last value of r
         # over the duration.
         new_total = total + r() * dt
         return new_total
-    return reduce_sample_unsafe(f, time, offset)
+    return reduce_sample_unsafe(f, time, initial)
+
+# TODO not rate-independent?
+def toggle(r, initial=False):
+    @computed([r], data={'last': r(), 'out': initial})
+    def toggle(r, data):
+        if r() != data['last']:
+            data['out'] = not data['out']
+        return data['out']
+    return toggle
 
 def effect(active):
     def wrap(gen):
