@@ -4,6 +4,7 @@ _to_reset = set()
 def tick():
     """Update all reactives based on changes to refs."""
     topo_sort = []
+    quiet_seeds = set()
     for seed in _to_update:
         stack = [seed]
         current_sort = []
@@ -20,17 +21,22 @@ def tick():
                 current_sort.append(r)
                 stack += r.links
             # Yes? No need to process it.
-
-            # Move insertion point to before r and all r's quiet links.
-            # XXX THIS ISN'T LEGIT. It can't order transitive quiet links which are added in the wrong order.
-            insert_point = topo_i
-            for l in r.quiet_links:
-                try:
-                    insert_point = topo_sort.index(l)
-                except Exception:
-                    pass
-
+            quiet_seeds.update(r.quiet_links)
+            # Move insertion point to before r.
+            insert_point = min(topo_i, insert_point)
+        # Repeat for quiet links.
+        stack = list(quiet_seeds)
+        while len(stack):
+            r = stack.pop()
+            topo_i = insert_point
+            try:
+                topo_i = topo_sort.index(r)
+            except ValueError:
+                stack += r.links
+                stack += r.quiet_links
+            insert_point = min(topo_i, insert_point)
         topo_sort[insert_point:insert_point] = current_sort
+
     # Clear the update set before running any external code, so any changes are
     # correctly remembered for next tick.
     _to_update.clear()
