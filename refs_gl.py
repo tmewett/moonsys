@@ -10,7 +10,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, gate, reduce_event, sample, integrate, flag, reduce_sample_unsafe
+from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, Reducer, gate, reduce_event, sample, integrate, flag, gate_context
 
 def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -20,25 +20,32 @@ def clear(*, color=(0, 0, 0, 255), depth=0):
 
 class drag_zoom_view:
     def __init__(self, active, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
-        g_ScrollChange = gate(active, ctx[ScrollChange])
-        g_MousePosition = gate(active, ctx[MousePosition])
-        g_MouseDrag = gate(active, ctx[MouseDrag])
-        s = reduce_event(lambda s, sc: s + sc.y, g_ScrollChange, 0)
+        ctx = gate_context(ctx, active, [ScrollChange, MousePosition, MouseDrag])
+        # s is the level of scroll. +/- 1 per scroll increment.
+        s = reduce_event(lambda s, sc: s + sc.y, ctx[ScrollChange], 0)
+        # s is the logarithm of the zoom factor, so to find zoom, raise it to a power.
         self.zoom = computed([s])(lambda s: scroll_factor ** s)
-        # zoom_center is screen centre in world space ignoring all dragging.
-        zoom_center = Ref(center)
-        @computed([g_MousePosition, ctx[Region].size, self.zoom, zoom_center])
-        def mouse_world(m, s, z, c):
-            if m is None: return Vec2(0, 0)
-            return c + (m - s/2) / z
-        target = sample(mouse_world, g_ScrollChange)
-        # s0 is the centre position if we zoomed out from target to 1x. It
-        # changes only when target does.
-        s0 = computed([target])(lambda t: (zoom_center() - t) * self.zoom())
-        zoom_center << computed([target, s0, self.zoom])(lambda t, s0, z: t + s0 / z)
-        drag_pos = reduce_event(lambda xa, x: xa - x / self.zoom(), g_MouseDrag, Vec2(0, 0))
-        drag_pos.log = 'dp'
-        self.center = computed([drag_pos, zoom_center])(lambda d, c: d + c)
+        # target is the position of the mouse in world space when zooming.
+        target = Reducer(self.center())
+        # target updates when scrolling.
+        @target.reduce(ctx[ScrollChange])
+        def _(t, sc):
+            if ctx[MousePosition]() is None: return t
+            return self.center() + (ctx[MousePosition]() - ctx[Region].size() / 2) / self.zoom()
+        # center is the center of the view in world space.
+        self.center = Reducer(center)
+        # It's draggable.
+        @self.center.reduce(ctx[MouseDrag])
+        def _(prev, drag):
+            return prev - drag / self.zoom()
+        # When zooming, we need to move center along the line passing through
+        # target and the current center. So the new center is target + the
+        # scaled target-to-center vector. We need to depend on target to ensure
+        # we zoom into the right place.
+        @self.center.reduce(s, [target])
+        def _(prev, new_s, target):
+            target_to_center = prev - target
+            return target + target_to_center * scroll_factor ** (s() - new_s)
 
 def draw_shader_image(active, ctx, fragment_src, *, uniforms={}):
     _program = pyglet.graphics.shader.ShaderProgram(
