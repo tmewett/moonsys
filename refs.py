@@ -165,7 +165,7 @@ class gate(ReadableReactive):
 def gate_context(ctx, open, keys):
     return ctx | {key: gate(open, ctx[key]) for key in keys}
 
-class flag:
+class Flag:
     def __init__(self, reactive):
         reactive._flags.add(self)
         self._value = False

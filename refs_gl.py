@@ -10,7 +10,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, Reducer, gate, reduce_event, sample, integrate, flag, gate_context
+from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, Reducer, gate, reduce_event, sample, integrate, Flag, gate_context
 
 def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -56,7 +56,7 @@ def draw_shader_image(active, ctx, fragment_src, *, uniforms={}):
     for name, value in uniforms.items():
         if name not in _program.uniforms: continue
         if isinstance(value, ReadableReactive):
-            uniform_refs.append((name, value, flag(value)))
+            uniform_refs.append((name, value, Flag(value)))
             _program[name] = value()
         else:
             print(name, value)
@@ -122,7 +122,7 @@ def on_event(active, ctx, name, handler):
         yield
         _handler_sets[name].remove(handler)
 
-class gatherer:
+class Gatherer:
     def __init__(self):
         self._all = []
     def add(self, on, x):
@@ -166,7 +166,7 @@ def define_window(setup):
     # v_MouseDrag.log = 'md'
     v_KeyMap = defaultdict(lambda: Ref(False))
     v_KeyPress = Ref(None, is_event=True)
-    v_Draws = gatherer()
+    v_Draws = Gatherer()
     v_Region = Region(Ref(Vec2(window.width, window.height)))
     ctx = {
         type(window): window,
