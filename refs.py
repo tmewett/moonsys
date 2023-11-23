@@ -11,6 +11,7 @@ def tick():
         insert_point = len(topo_sort)
         while len(stack):
             r = stack.pop()
+            topo_i = insert_point
             # Is the reactive already in the outer sort?
             try:
                 topo_i = topo_sort.index(r)
@@ -18,11 +19,17 @@ def tick():
                 # No? Continue down tree, depth-first.
                 current_sort.append(r)
                 stack += r.links
-            else:
-                # Yes? Move the insertion point back to before that reactive.
-                # Skip processing it in the current sort since it's already been
-                # done.
-                insert_point = min(topo_i, insert_point)
+            # Yes? No need to process it.
+
+            # Move insertion point to before r and all r's quiet links.
+            # XXX THIS ISN'T LEGIT. It can't order transitive quiet links which are added in the wrong order.
+            insert_point = topo_i
+            for l in r.quiet_links:
+                try:
+                    insert_point = topo_sort.index(l)
+                except Exception:
+                    pass
+
         topo_sort[insert_point:insert_point] = current_sort
     # Clear the update set before running any external code, so any changes are
     # correctly remembered for next tick.
@@ -55,6 +62,7 @@ class ReadableReactive:
     """
     def __init__(self, initial_value, *, is_event):
         self.links = set()
+        self.quiet_links = set()
         self._flags = set()
         # We require an initial value because otherwise we'd need a safe
         # .get(default) for uninitialised reactives, and in Python you can't
@@ -154,6 +162,9 @@ class gate(ReadableReactive):
         else:
             self._reactive.links.remove(self)
 
+def gate_context(ctx, open, keys):
+    return ctx | {key: gate(open, ctx[key]) for key in keys}
+
 class flag:
     def __init__(self, reactive):
         reactive._flags.add(self)
@@ -171,6 +182,22 @@ class sample(ReadableReactive):
         super().__init__(self._reactive(), is_event=False)
     def update(self):
         self._next_value = self._reactive()
+
+class Reducer(ReadableReactive):
+    def __init__(self, initial):
+        self.processors = []
+        super().__init__(initial, is_event=False)
+    def reduce(self, event, deps=[]):
+        event.links.add(self)
+        for r in deps:
+            r.quiet_links.add(self)
+        def wrap(f):
+            self.processors.append([event, deps, f])
+        return wrap
+    def update(self):
+        for event, deps, reducer in self.processors:
+            if event._next_value is not None:
+                self._next_value = reducer(self._next_value, event._next_value, *[d._next_value for d in deps])
 
 class process_event(ReadableReactive):
     def __init__(self, f, event, state):
