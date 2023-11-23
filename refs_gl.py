@@ -26,7 +26,7 @@ class drag_zoom_view:
         # s is the logarithm of the zoom factor, so to find zoom, raise it to a power.
         self.zoom = computed([s])(lambda s: scroll_factor ** s)
         # target is the position of the mouse in world space when zooming.
-        target = Reducer(self.center())
+        target = Reducer(center)
         # target updates when scrolling.
         @target.reduce(ctx[ScrollChange])
         def _(t, sc):
