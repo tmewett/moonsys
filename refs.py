@@ -4,12 +4,13 @@ _to_reset = set()
 def tick():
     """Update all reactives based on changes to refs."""
     topo_sort = []
-    quiet_seeds = set()
+    loud_reachable = set(_to_update)
     for seed in _to_update:
         stack = [seed]
         current_sort = []
+        enumerated = set()
         # Where the inner sort will be inserted into the outer sort; the minimum index of all reactives
-        insert_point = len(topo_sort)
+        insert_point = 0
         while len(stack):
             r = stack.pop()
             topo_i = insert_point
@@ -18,34 +19,33 @@ def tick():
                 topo_i = topo_sort.index(r)
             except ValueError:
                 # No? Continue down tree, depth-first.
-                current_sort.append(r)
+                e = r in enumerated
+                if e or len(r.links) + len(r.quiet_links) == 0:
+                    if r not in current_sort: current_sort.append(r)
+                    if e: enumerated.remove(r)
+                    continue
+                stack.append(r)
                 stack += r.links
-            # Yes? No need to process it.
-            quiet_seeds.update(r.quiet_links)
-            # Move insertion point to before r.
-            insert_point = min(topo_i, insert_point)
-        # Repeat for quiet links.
-        stack = list(quiet_seeds)
-        while len(stack):
-            r = stack.pop()
-            topo_i = insert_point
-            try:
-                topo_i = topo_sort.index(r)
-            except ValueError:
-                stack += r.links
+                #
+                if r in loud_reachable:
+                    loud_reachable |= r.links
                 stack += r.quiet_links
-            insert_point = min(topo_i, insert_point)
-        topo_sort[insert_point:insert_point] = current_sort
+                enumerated.add(r)
+            # Yes? No need to process it.
+            # Move insertion point to before r.
+            insert_point = max(topo_i, insert_point)
+        topo_sort[insert_point + 1:insert_point + 1] = current_sort
 
     # Clear the update set before running any external code, so any changes are
     # correctly remembered for next tick.
     _to_update.clear()
-    for r in topo_sort:
+    update_order = [r for r in reversed(topo_sort) if r in loud_reachable]
+    for r in update_order:
         r.update()
         for f in r._flags: f._value = True
-    for r in topo_sort:
+    for r in update_order:
         if r.log:
-            print(f"{r.log}: {r._value} <- {r._next_value}")
+            print(f"{r.log!r}: {r._value} <- {r._next_value}")
         r._value = r._next_value
     for r in _to_reset:
         r.set(None)
