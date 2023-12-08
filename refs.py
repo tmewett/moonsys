@@ -78,14 +78,17 @@ class ReadableReactive:
         self._value = self._next_value = initial_value
         self.is_event = is_event
         self.log = None
+        self._origin = None
         _to_update.add(self)
     def set_origin(self):
         import inspect
         frame = inspect.currentframe()
-        tb = inspect.getframeinfo(frame.f_back.f_back)
+        tb = inspect.getframeinfo(frame.f_back.f_back.f_back)
         self._origin = f"{tb.function}:{tb.lineno}"
     def __repr__(self):
-        return f"<{self.__class__.__name__}({self._value})>"
+        name = f"{self.log!r} " if self.log is not None else ""
+        origin = f"at {self._origin} " if self._origin is not None else ""
+        return f"<{name}{origin}{self.__class__.__name__}: {self._value}>"
     def __call__(self):
         return self._value
 
