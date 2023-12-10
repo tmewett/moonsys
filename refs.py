@@ -31,9 +31,10 @@ def tick():
                     loud_reachable |= r.links
                 stack += r.quiet_links
                 enumerated.add(r)
-            # Yes? No need to process it.
-            # Move insertion point to before r.
-            insert_point = max(topo_i, insert_point)
+            else:
+                # Yes? No need to process it.
+                # Move insertion point to before r.
+                insert_point = max(topo_i, insert_point)
         topo_sort[insert_point + 1:insert_point + 1] = current_sort
 
     # Clear the update set before running any external code, so any changes are
