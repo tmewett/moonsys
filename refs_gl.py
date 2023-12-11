@@ -10,7 +10,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, Ref, ReadableReactive, read_only, tick, Reducer, gate, reduce_event, sample, integrate, Flag, gate_context
+from refs import as_ref, computed, Ref, Reactive, read_only, tick, Reducer, gate, reduce_event, sample, integrate, Flag, gate_context
 
 def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -55,7 +55,7 @@ def draw_shader_image(active, ctx, fragment_src, *, uniforms={}):
     uniform_refs = []
     for name, value in uniforms.items():
         if name not in _program.uniforms: continue
-        if isinstance(value, ReadableReactive):
+        if isinstance(value, Reactive):
             uniform_refs.append((name, value, Flag(value)))
             _program[name] = value()
         else:
@@ -200,7 +200,7 @@ def define_window(setup):
     def on_mouse_drag(x, y, dx, dy, *_):
         v_MousePosition.set(Vec2(x, y))
         v_MousePositionChange.set(Vec2(dx, dy))
-        if v_LeftMouse._next_value:
+        if v_LeftMouse():
             v_MouseDrag.set(Vec2(dx, dy))
         tick()
     @window.event

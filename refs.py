@@ -45,10 +45,10 @@ def tick():
         for f in r._flags: f._value = True
     for r in update_order:
         if r.log:
-            print(f"{r.log!r}: {r._value} <- {r._next_value}")
-        r._value = r._next_value
+            print(f"{r.log!r}: {r._value} <- {r.next_value}")
+        r.finish_update()
 
-class ReadableReactive:
+class Reactive:
     """Base class for a reactive value.
 
     Reactives cover both continuous values and event streams; they are
@@ -56,14 +56,15 @@ class ReadableReactive:
 
     To create a custom reactive, subclass this and:
 
-    -   call its __init__ at the end of your own initialiser
-    -   override update() to set self._next_value to the new value
+    -   call Reactive.setup() at the end of your own initialiser
+    -   set self.is_event, self._value
+    -   override update() to set self.next_value to the new value
 
     To make a reactive B depend on another one A, do `A.links.add(B)`. Note that
-    to use A's new value, B needs to refer to A._next_value in its update
+    to use A's new value, B needs to refer to A.next_value in its update
     method, not A().
     """
-    def __init__(self, initial_value, *, is_event):
+    def setup(self):
         self.links = set()
         self.quiet_links = set()
         self._flags = set()
@@ -72,44 +73,41 @@ class ReadableReactive:
         # pick default values in type-generic cases. In a language with
         # type-infering `zero` or other default value functions, this may be
         # possible.
-        self._value = self._next_value = initial_value
-        self.is_event = is_event
         self.log = None
         self._origin = None
-        _to_update.add(self)
     def set_origin(self):
         import inspect
         frame = inspect.currentframe()
         tb = inspect.getframeinfo(frame.f_back.f_back.f_back)
         self._origin = f"{tb.function}:{tb.lineno}"
-    def __repr__(self):
+    def __str__(self):
         name = f"{self.log!r} " if self.log is not None else ""
         origin = f"at {self._origin} " if self._origin is not None else ""
         return f"<{name}{origin}{self.__class__.__name__}: {self._value}>"
     def __call__(self):
         return self._value
-
-class Reactive(ReadableReactive):
-    def set(self, x):
-        self.setter(x)
-        _to_update.add(self)
+    def finish_update(self):
+        self._value = self.next_value
 
 def as_ref(x):
     """Turns a value into a reactive, if it isn't already."""
-    if isinstance(x, ReadableReactive):
+    if isinstance(x, Reactive):
         return x
     return Ref(x)
 
 class Ref(Reactive):
     """Settable input reactive."""
     def __init__(self, value, is_event=False):
-        super().__init__(value, is_event=is_event)
+        Reactive.setup(self)
+        self._value = self.next_value = value
+        self.is_event = is_event
         self._driver = None
     def update(self):
         if self._driver:
-            self._next_value = self._driver._next_value
-    def setter(self, x):
-        self._next_value = x
+            self.next_value = self._driver.next_value
+    def set(self, x):
+        self.next_value = x
+        _to_update.add(self)
     def __lshift__(self, r):
         # We can have circularity in reference to reactives even without circularity in deps (pull sampling).
         if self.is_event != r.is_event:
@@ -121,13 +119,15 @@ class Ref(Reactive):
 
 ref = Ref
 
-class read_only(ReadableReactive):
+class read_only(Reactive):
     def __init__(self, ref):
-        super().__init__(ref(), is_event=ref.is_event)
+        Reactive.setup(self)
+        self._value = self.next_value = ref()
+        self.is_event = ref.is_event
         self._ref = ref
         ref.links.add(self)
     def update(self):
-        self._next_value = self._ref._next_value
+        self.next_value = self._ref.next_value
 
 def computed(*args):
     """Reactive function."""
@@ -136,33 +136,50 @@ def computed(*args):
     return builder
 
 # we could still do auto-detecting dependencies, we'd just have to swap out () to next value during execution. it that safe?
-class Computed(ReadableReactive):
+class Computed(Reactive):
     def __init__(self, function, deps, *, is_event=False, data=None):
         self._function = function
         self._deps = deps
         self._data = data
         for ref in deps:
             ref.links.add(self)
-        super().__init__(self._get_next_value(), is_event=False)
+        Reactive.setup(self)
+        self._cached = self._cached_next = (True, None)
+        self.is_event = False
     def update(self):
-        self._next_value = self._get_next_value()
-    def _get_next_value(self):
-        if self._data is not None:
-            return self._function(*[r._next_value for r in self._deps], self._data)
-        return self._function(*[r._next_value for r in self._deps])
+        self._cached_next = (True, None)
+    def finish_update(self):
+        self._cached = self._cached_next
+    def __call__(self):
+        if self._cached[0]:
+            args = [r() for r in self._deps]
+            if self._data is not None:
+                args.append(self._data)
+            self._cached = (False, self._function(*args))
+        return self._cached[1]
+    @property
+    def next_value(self):
+        if self._cached_next[0]:
+            args = [r.next_value for r in self._deps]
+            if self._data is not None:
+                args.append(self._data)
+            self._cached_next = (False, self._function(*args))
+        return self._cached_next[1]
 
-class gate(ReadableReactive):
+class gate(Reactive):
     def __init__(self, open, reactive):
         self._open = open
         self._open.links.add(self)
         self._reactive = reactive
         if self._open():
             self._reactive.links.add(self)
-        super().__init__(reactive() if open() else None, is_event=reactive.is_event)
+        Reactive.setup(self)
+        self._value = self.next_value = reactive() if open() else None
+        self.is_event = reactive.is_event
     def update(self):
         if self._open():
             self._reactive.links.add(self)
-            self._next_value = self._reactive._next_value
+            self.next_value = self._reactive.next_value
         else:
             self._reactive.links.remove(self)
 
@@ -178,19 +195,23 @@ class Flag:
         self._value = False
         return value
 
-class sample(ReadableReactive):
+class sample(Reactive):
     def __init__(self, reactive, event):
         self._reactive = reactive
         self._event = event
         self._event.links.add(self)
-        super().__init__(self._reactive(), is_event=False)
+        Reactive.setup(self)
+        self._value = self.next_value = self._reactive()
+        self.is_event = False
     def update(self):
-        self._next_value = self._reactive()
+        self.next_value = self._reactive()
 
-class Reducer(ReadableReactive):
+class Reducer(Reactive):
     def __init__(self, initial):
         self.processors = []
-        super().__init__(initial, is_event=True)
+        Reactive.setup(self)
+        self._value = self.next_value = initial
+        self.is_event = True
     def reduce(self, event, deps=[]):
         if not event.is_event:
             raise ValueError("first argument to reduce must be an event")
@@ -202,19 +223,21 @@ class Reducer(ReadableReactive):
         return wrap
     def update(self):
         for event, deps, reducer in self.processors:
-            if event._next_value is not None:
-                self._next_value = reducer(self._next_value, event._next_value, *[d._next_value for d in deps])
+            if event.next_value is not None:
+                self.next_value = reducer(self.next_value, event.next_value, *[d.next_value for d in deps])
 
-class process_event(ReadableReactive):
+class process_event(Reactive):
     def __init__(self, f, event, state):
         self._f = f
         self._event = event
         self._event.links.add(self)
         self._state = state
-        super().__init__(self._state, is_event=True)
+        Reactive.setup(self)
+        self._value = self.next_value = self._state
+        self.is_event = True
     def update(self):
-        if self._event._next_value is not None:
-            self._state, self._next_value = self._f(self._state, self._event._next_value)
+        if self._event.next_value is not None:
+            self._state, self.next_value = self._f(self._state, self._event.next_value)
 
 def reduce_event(f, event, init):
     def reduce(a, e):
@@ -222,15 +245,17 @@ def reduce_event(f, event, init):
         return x, x
     return process_event(reduce, event, init)
 
-class process_sample_unsafe(ReadableReactive):
+class process_sample_unsafe(Reactive):
     def __init__(self, reduce, time, state):
         self._reduce = reduce
         self._time = time
         self._time.links.add(self)
         self._state = state
-        super().__init__(self._state, is_event=False)
+        Reactive.setup(self)
+        self._value = self.next_value = self._state
+        self.is_event = False
     def update(self):
-        self._state, self._next_value = self._reduce(self._state, self._time._next_value - self._time())
+        self._state, self.next_value = self._reduce(self._state, self._time.next_value - self._time())
 
 def reduce_sample_unsafe(f, time, init):
     def reduce(a, e):
