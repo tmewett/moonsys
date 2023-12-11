@@ -1,5 +1,4 @@
 _to_update = set()
-_to_reset = set()
 
 def tick():
     """Update all reactives based on changes to refs."""
@@ -48,9 +47,6 @@ def tick():
         if r.log:
             print(f"{r.log!r}: {r._value} <- {r._next_value}")
         r._value = r._next_value
-    for r in _to_reset:
-        r.set(None)
-    _to_reset.clear()
 
 class ReadableReactive:
     """Base class for a reactive value.
@@ -114,8 +110,6 @@ class Ref(Reactive):
             self._next_value = self._driver._next_value
     def setter(self, x):
         self._next_value = x
-        if self.is_event and x is not None:
-            _to_reset.add(self)
     def __lshift__(self, r):
         # We can have circularity in reference to reactives even without circularity in deps (pull sampling).
         if self.is_event != r.is_event:
@@ -196,8 +190,10 @@ class sample(ReadableReactive):
 class Reducer(ReadableReactive):
     def __init__(self, initial):
         self.processors = []
-        super().__init__(initial, is_event=False)
+        super().__init__(initial, is_event=True)
     def reduce(self, event, deps=[]):
+        if not event.is_event:
+            raise ValueError("first argument to reduce must be an event")
         event.links.add(self)
         for r in deps:
             r.quiet_links.add(self)
@@ -215,7 +211,7 @@ class process_event(ReadableReactive):
         self._event = event
         self._event.links.add(self)
         self._state = state
-        super().__init__(self._state, is_event=False)
+        super().__init__(self._state, is_event=True)
     def update(self):
         if self._event._next_value is not None:
             self._state, self._next_value = self._f(self._state, self._event._next_value)
