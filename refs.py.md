@@ -1,6 +1,18 @@
 # refs.py
 
-refs.py is an FRP library for Python.
+refs.py is a work-in-progress FRP library for Python.
+
+As far as I can tell, no reactivity library outside of functional languages implements a model of reactivity more powerful than observables with batching. I discuss this in [Real reactivity has never been tried (FRP vs observables)](https://tmewett.com/limitations-of-observables/). refs.py aims to implement more, namely:
+
+-   safe stateful reactives, like integrals
+-   cycles/feedback
+-   reactive events, safely separated from continuous value refs
+-   two-way data flow: reactives which dynamically "collect" values from "children"
+
+This is a core API overview; TODO write:
+
+-   how to use a refs.py-based library
+-   how to write a refs.py-based library
 
 ## Basics
 
@@ -17,7 +29,7 @@ Call `.set(new_value)` to change it. Changes only propagate after calling `tick`
     tick()
     print(x())  # 3
 
-A Ref can be "driven" by another reactive: `ref << reactive` causes `ref` to mirror `reactive`'s value. This can be used to basically "declare" a Ref early: you create one with a default value, do things with it, then set its actual value. You can create certain kinds of cycles e.g. with `integrate`.
+A Ref can be "driven" by another reactive: `ref << reactive` causes `ref` to mirror `reactive`'s value. This can be used to basically "declare" a Ref early: you create one with a default value, create other reactives using it, then set its actual value. You can create certain kinds of cycles e.g. with `integrate`.
 
 `tick()` causes all changed reactives to update.
 
@@ -33,21 +45,40 @@ A Ref can be "driven" by another reactive: `ref << reactive` causes `ref` to mir
 
     print(squared())  # 9
 
-## Events
+computeds **must** be pure functions (no side-effects).
 
-Reactives can also be classified as events.
+You can refer to any other reactive in a computed, without depending on it, by calling it as usual. This allows you to create cycles.
 
-`Ref` takes a keyword argument `is_event` which defaults to `False`. When set to `True`, the ref's values are considered to be discrete events. You call `.set` on them like normal; but after the next tick, they are set back to `None`. They are essentially values which last for one tick only.
+## Events and reducers
 
-You can use event reactives in computeds.
+Reactives can also be classified as events. Typical reactivity libraries don't properly support events, leaving that to your external, non-reactive code. Reactive events allow us to encapsulate and compose entire components, just like Web frameworks, but even more flexible.
 
-## Changes
+`Ref` takes a keyword argument `is_event` which defaults to `False`. When set to `True`, the ref's values are considered to be a stream of discrete events. Events can be used anywhere non-events can (they evaluate to the most recent event value), but can also be used in some extra, powerful reactives.
 
-You can't subscribe to reactives, so other types of reactives exist to deal with changes.
+The main one is `Reducer`. This lets you write fully reactive code in a natural way, just like you'd write with event handlers.
+
+    # Calculate blackjack hand score, given a stream of card score events.
+
+    card_scores = Ref(0, is_event=True)
+    hand_score = Reducer(0)
+
+    @hand_score.reduce(card_scores)
+    def _(prev, card_score):
+        if prev + card_score > 21:
+            return 0
+        return prev + card_score
+
+You can add multiple reduce methods, from multiple events, onto one Reducer. Where multiple input events trigger on the same tick, the methods run in the order they are added.
+
+Reducers are events themselves.
+
+## Gatherers
+
+TODO
+
+## Misc
 
 `sample(r, event)` updates with `r`'s value every time `event` triggers.
-
-`reduce_event(f, event, initial)` starts as `initial` and updates with values from `event` by a reduction/fold with `f`.
 
 `integrate(r, time, initial=0.0)` is the live integral of `r` with respect to `time`, starting at `initial`. `time` must be a reactive float which never decreases. Note: this reactive does not depend on `r`, so `r` can be recursively defined with its own integral:
 
