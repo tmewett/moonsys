@@ -184,7 +184,7 @@ class gate(Reactive):
             self._reactive.links.remove(self)
 
 def gate_context(ctx, open, keys):
-    return ctx | {key: gate(open, ctx[key]) for key in keys}
+    return ctx.add({key: gate(open, ctx[key]) for key in keys})
 
 class Flag:
     def __init__(self, reactive):
@@ -244,6 +244,21 @@ def reduce_event(f, event, init):
         x = f(a, e)
         return x, x
     return process_event(reduce, event, init)
+
+class Active: pass
+
+class Context:
+    def __init__(self, data):
+        self._data = data
+    @classmethod
+    def initial(cls):
+        return cls({
+            Active: Ref(True),
+        })
+    def add(self, extra):
+        return Context(self._data | extra)
+    def __getitem__(self, k):
+        return self._data[k]
 
 class process_sample_unsafe(Reactive):
     def __init__(self, reduce, time, state):

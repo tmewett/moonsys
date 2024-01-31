@@ -10,7 +10,7 @@ import pyglet
 from pyglet.gl import Config
 from pyglet.math import Vec2
 
-from refs import as_ref, computed, Ref, Reactive, read_only, tick, Reducer, gate, reduce_event, sample, integrate, Flag, gate_context
+from refs import Context, as_ref, computed, Ref, Reactive, read_only, tick, Reducer, gate, reduce_event, integrate, Flag, gate_context, Active
 
 def clear(*, color=(0, 0, 0, 255), depth=0):
     from pyglet.gl import glClear, glClearColor, glClearDepth, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT
@@ -19,8 +19,8 @@ def clear(*, color=(0, 0, 0, 255), depth=0):
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
 class drag_zoom_view:
-    def __init__(self, active, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
-        ctx = gate_context(ctx, active, [ScrollChange, MousePosition, MouseDrag])
+    def __init__(self, ctx, *, center=Vec2(0.0, 0.0), zoom=1.0, scroll_factor=5/3):
+        ctx = gate_context(ctx, ctx[Active], [ScrollChange, MousePosition, MouseDrag])
         # s is the level of scroll. +/- 1 per scroll increment.
         s = reduce_event(lambda s, sc: s + sc.y, ctx[ScrollChange], 0)
         # s is the logarithm of the zoom factor, so to find zoom, raise it to a power.
@@ -47,7 +47,7 @@ class drag_zoom_view:
             target_to_center = prev - target
             return target + target_to_center * scroll_factor ** (s() - new_s)
 
-def draw_shader_image(active, ctx, fragment_src, *, uniforms={}):
+def draw_shader_image(ctx, fragment_src, *, uniforms={}):
     _program = pyglet.graphics.shader.ShaderProgram(
         pyglet.graphics.shader.Shader("#version 330\nin vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }", 'vertex'),
         pyglet.graphics.shader.Shader(fragment_src, 'fragment'),
@@ -70,9 +70,9 @@ def draw_shader_image(active, ctx, fragment_src, *, uniforms={}):
             if flag.pop():
                 _program[name] = value()
         _vlist.draw(pyglet.gl.GL_TRIANGLES)
-    ctx[Draws].add(active, draw)
+    ctx[Draws].add(ctx[Active], draw)
 
-def record(on, ctx):
+def record(ctx):
     take = datetime.now().strftime("refs_gl_%Y-%m-%d_%H-%M-%S")
     dir = Path(take)
     dir.mkdir()
@@ -84,7 +84,7 @@ def record(on, ctx):
         file = dir / f"{frames:06}.png"
         color.save(file)
         frames += 1
-    ctx[Draws].add(on, draw)
+    ctx[Draws].add(ctx[Active], draw)
 
 def video_time(ctx, *, fps):
     return computed([ctx[FrameCount]])(lambda fc: fc / fps)
@@ -92,7 +92,7 @@ def video_time(ctx, *, fps):
 def warped_time(time, *, speed):
     return integrate(speed, time)
 
-def time_control(on, ctx):
+def time_control(ctx):
     def r(prev, k):
         if k == 'SPACE':
             return 0.0 if prev != 0.0 else 1.0
@@ -168,7 +168,7 @@ def define_window(setup):
     v_KeyPress = Ref(None, is_event=True)
     v_Draws = Gatherer()
     v_Region = Region(Ref(Vec2(window.width, window.height)))
-    ctx = {
+    ctx = Context.initial().add({
         type(window): window,
         FrameCount: v_FrameCount,
         FrameTime: v_FrameTime,
@@ -181,8 +181,7 @@ def define_window(setup):
         KeyPress: v_KeyPress,
         Draws: v_Draws,
         Region: v_Region,
-    }
-    active = Ref(True)
+    })
     @window.event
     def on_draw():
         nonlocal frames
@@ -227,4 +226,4 @@ def define_window(setup):
     def on_key_release(symbol, modifiers):
         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
         tick()
-    setup(read_only(active), ctx)
+    setup(ctx)
