@@ -31,13 +31,13 @@ class drag_zoom_view:
         @target.reduce(ctx[ScrollChange])
         def _(t, sc):
             if ctx[MousePosition]() is None: return t
-            return self.center() + (ctx[MousePosition]() - ctx[Region].size() / 2) / self.zoom()
+            return self.center() + (ctx[MousePosition]() - ctx[Region].size() / 2) * 2.25 / self.zoom()
         # center is the center of the view in world space.
         self.center = Reducer(center)
         # It's draggable.
         @self.center.reduce(ctx[MouseDrag])
         def _(prev, drag):
-            return prev - drag / self.zoom()
+            return prev - drag * 2.25 / self.zoom()
         # When zooming, we need to move center along the line passing through
         # target and the current center. So the new center is target + the
         # scaled target-to-center vector. We need to depend on target to ensure
