@@ -72,17 +72,15 @@ def draw_shader_image(ctx, fragment_src, *, uniforms={}):
         _vlist.draw(pyglet.gl.GL_TRIANGLES)
     ctx[Draws].add(ctx[Active], draw)
 
-def record(ctx):
+def record_image(ctx, image):
     take = datetime.now().strftime("refs_gl_%Y-%m-%d_%H-%M-%S")
     dir = Path(take)
     dir.mkdir()
-    bm = pyglet.image.get_buffer_manager()
-    color = bm.get_color_buffer()
     frames = 0
     def draw():
         nonlocal frames
         file = dir / f"{frames:06}.png"
-        color.save(file)
+        image.save(file)
         frames += 1
     ctx[Draws].add(ctx[Active], draw)
 
@@ -150,8 +148,8 @@ class Region:
     def __init__(self, size):
         self.size = size
 
-def define_window(setup):
-    window = pyglet.window.Window()
+def define_window(setup, width=800, height=600):
+    window = pyglet.window.Window(width=width, height=height)
     # Load empty handler frame for on_event.
     window._event_stack = [{}]
     frames = 0
@@ -167,7 +165,7 @@ def define_window(setup):
     v_KeyMap = defaultdict(lambda: Ref(False))
     v_KeyPress = Ref(None, is_event=True)
     v_Draws = Gatherer()
-    v_Region = Region(Ref(Vec2(window.width, window.height)))
+    v_Region = Region(Ref(Vec2(width, height)))
     ctx = Context.initial().add({
         type(window): window,
         FrameCount: v_FrameCount,
@@ -225,5 +223,9 @@ def define_window(setup):
     @window.event
     def on_key_release(symbol, modifiers):
         v_KeyMap[pyglet.window.key.symbol_string(symbol)].set(False)
+        tick()
+    @window.event
+    def on_resize(w, h):
+        v_Region.size.set(Vec2(w, h))
         tick()
     setup(ctx)
