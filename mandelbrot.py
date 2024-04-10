@@ -6,7 +6,7 @@ from pyglet.math import Vec2
 from pyglet.gl import glViewport
 
 import refs_gl
-from refs import Ref, computed, Active
+from refs import computed, Active, Reducer
 
 def setup(ctx):
     time = refs_gl.video_time(ctx, fps=60)
@@ -43,7 +43,13 @@ def setup(ctx):
         tex.blit(0, 0, width=w, height=h)
     ctx[refs_gl.Draws].add(ctx[Active], draw_fb)
 
-    # refs_gl.record_image(ctx, tex)
+    recording = Reducer(False)
+    @recording.reduce(ctx[refs_gl.KeyPress])
+    def _(prev, key):
+        if key != 'R':
+            return prev
+        return not prev
+    refs_gl.record_image(ctx.add({Active: recording}), tex)
 
 refs_gl.define_window(setup, 480, 854)
 pyglet.app.run()
