@@ -45,7 +45,7 @@ def tick():
         for f in r._flags: f._value = True
     for r in update_order:
         if r.log:
-            print(f"{r.log!r}: {r._value} <- {r.next_value}")
+            print(f"{r.log!r} <- {r.next_value}")
         r.finish_update()
 
 class Reactive:
