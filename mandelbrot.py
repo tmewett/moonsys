@@ -34,6 +34,15 @@ def setup(ctx):
             'time': fractal_time,
         },
     )
+    def save_screen():
+        pass
+    is_saving = Ref(False)
+    @ctx[refs_gl.KeyMap]['S'].watch()
+    def toggle_saving(s):
+        if s:
+            # .map could remove the dependency here, if this were a multi-watch...
+            is_saving.set(not is_saving())
+    ctx[refs_gl.Draws].add(is_saving, save_screen)
 
     def draw_fb():
         fbo.unbind()
